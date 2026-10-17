@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -127,6 +128,9 @@ func readAll(t *testing.T, path string) string {
 }
 
 func TestAtomicWritePreservesPermissionsAndUnrelatedTemp(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no POSIX permission bits to preserve")
+	}
 	root := t.TempDir()
 	path := filepath.Join(root, "data")
 	if err := os.WriteFile(path, []byte("original"), 0o600); err != nil {
@@ -167,6 +171,9 @@ func TestAtomicWritePreservesPermissionsAndUnrelatedTemp(t *testing.T) {
 }
 
 func TestFailedPublicationDoesNotExposeTemporaryNameOrModifyOriginal(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a read-only directory mode does not stop creation on Windows")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("requires unprivileged user")
 	}
@@ -193,6 +200,9 @@ func TestConfinedOperationsRejectEscapes(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
 	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("creating a symlink needs Developer Mode or elevation: %v", err)
+		}
 		t.Fatal(err)
 	}
 	for _, path := range []string{filepath.Join(outside, "file"), filepath.Join(root, "link", "file")} {
@@ -220,6 +230,35 @@ func TestReadDirFileErrorIsPlatformStable(t *testing.T) {
 	var pe *os.PathError
 	if !errors.As(err, &pe) || pe.Op != "readdir" || pe.Path != path {
 		t.Fatalf("ReadDir error = %v", err)
+	}
+	// Windows carries ERROR_DIRECTORY instead (platform_windows_test.go).
+	if runtime.GOOS != "windows" && !errors.Is(pe.Err, syscall.ENOTDIR) {
+		t.Fatalf("ReadDir errno = %v, want ENOTDIR", pe.Err)
+	}
+}
+
+// A regular file where a storage directory belongs refuses every confined
+// read with darwin's error, "statat <rel>: not a directory", on every OS.
+func TestConfinedReadsBelowAFileAreNotADirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "knowledge"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "knowledge", "prd.md")
+	want := "statat " + filepath.Join("knowledge", "prd.md") + ": not a directory"
+	_, rerr := ReadFile(root, path)
+	_, serr := Stat(root, path)
+	_, derr := ReadDir(root, filepath.Join(root, "knowledge", "decisions"))
+	for _, c := range []struct {
+		name string
+		err  error
+	}{{"ReadFile", rerr}, {"Stat", serr}} {
+		if !errors.Is(c.err, NotADirectory) || c.err.Error() != want {
+			t.Errorf("%s error = %v, want %q", c.name, c.err, want)
+		}
+	}
+	if !errors.Is(derr, NotADirectory) {
+		t.Errorf("ReadDir error = %v, want NotADirectory", derr)
 	}
 }
 

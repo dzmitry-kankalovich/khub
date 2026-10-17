@@ -20,6 +20,12 @@ func TestStorageOwnershipAndPathSafety(t *testing.T) {
 		{"file as directory", "a: {layout: collection, path: objects.json}\n  b: {layout: file, path: objects.json/b}", false},
 		{"siblings", "a: {layout: file, path: objects/a}\n  b: {layout: file, path: objects/b}", true},
 		{"normalize", "a: {layout: file, path: ./objects/a}\n  b: {layout: file, path: objects/b}", true},
+		{"reserved singleton", "a: {layout: singleton, path: con.md}\n  b: {layout: file, path: b}", false},
+		{"reserved folder", "a: {layout: file, path: notes/NUL/a}\n  b: {layout: file, path: b}", false},
+		{"reserved collection", "a: {layout: collection, path: com0.jsonl}\n  b: {layout: file, path: b}", false},
+		{"reserved trailing space", "a: {layout: file, path: 'notes/con /a'}\n  b: {layout: file, path: b}", false},
+		{"reserved superscript", "a: {layout: file, path: com¹}\n  b: {layout: file, path: b}", false},
+		{"reserved-looking", "a: {layout: singleton, path: console.md}\n  b: {layout: file, path: con-b}", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			doc := "ontology:\n  entities:\n    a: {}\n    b: {}\nstorage:\n  " + tc.storage + "\n"
@@ -41,5 +47,53 @@ func TestInvalidPatternRejectedAtResolve(t *testing.T) {
 	_, err := ResolveWith(nil, writeSchemaFiles(t, "ontology:\n  entities:\n    item:\n      attributes:\n        code: {type: text, pattern: '['}\n"))
 	if err == nil || !strings.Contains(err.Error(), "Invalid pattern") {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+// A type with no storage path is stored under its own name, so a type named
+// after a device is refused too, and the message names the part and the fix.
+func TestReservedDeviceNameRefusedInStoragePaths(t *testing.T) {
+	_, err := ResolveWith(nil, writeSchemaFiles(t, "ontology:\n  entities:\n    aux: {}\n"))
+	if err == nil || !strings.Contains(err.Error(), "storage.aux.path: 'aux' is a reserved device name on Windows") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+// An escape or a control path keeps the storage text even when a part is a
+// device name; a device name inside storage gets the device text.
+func TestStoragePathRefusalNamesTheCause(t *testing.T) {
+	const storageText = "path must stay in workspace storage and cannot own khub control files"
+	for _, tc := range []struct{ path, want string }{
+		{"../con", storageText},
+		{".khub/nul", storageText},
+		{"notes/con", "'con' is a reserved device name on Windows (notes/con); choose another path"},
+	} {
+		doc := "ontology:\n  entities:\n    a: {}\nstorage:\n  a: {layout: file, path: " + tc.path + "}\n"
+		_, err := ResolveWith(nil, writeSchemaFiles(t, doc))
+		if err == nil || !strings.Contains(err.Error(), "storage.a.path: "+tc.want) {
+			t.Errorf("%s: err=%v, want %q", tc.path, err, tc.want)
+		}
+	}
+}
+
+func TestReservedDeviceName(t *testing.T) {
+	for _, name := range []string{
+		"con", "CON", "Prn", "aux", "nul", "com0", "com1", "COM9", "lpt0", "lpt1", "lpt9",
+		"con.md", "nul.tar.gz", "Aux.json",
+		"com\u00b9", "COM\u00b2", "lpt\u00b3", "LPT\u00b9.md",
+		"conin$", "CONOUT$", "conin$.txt",
+		"con ", "con.", "con .txt", "nul  ", "aux. ",
+	} {
+		if !ReservedDeviceName(name) {
+			t.Errorf("ReservedDeviceName(%q) = false", name)
+		}
+	}
+	for _, name := range []string{
+		"", "co", "conn", "con-x", "ad-con", "2026-01-15-con", "com", "com10",
+		"xnul", "nul-", "my.con", " con", "com\u2074", "com\u00b9\u00b9", "conin", "conout",
+	} {
+		if ReservedDeviceName(name) {
+			t.Errorf("ReservedDeviceName(%q) = true", name)
+		}
 	}
 }

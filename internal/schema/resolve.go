@@ -162,7 +162,7 @@ func resolveIn(root string, baseDoc *omap.Map, schemaFiles []string) (*ResolvedS
 		if err != nil {
 			return nil, err
 		}
-		docs = append(docs, schemaDoc{name: f, m: data})
+		docs = append(docs, schemaDoc{name: filepath.ToSlash(f), m: data})
 	}
 
 	layers, err := mergeLayers(docs)
@@ -309,10 +309,20 @@ func validateResolved(resolved *ResolvedSchema) error {
 		}
 		rel := filepath.Clean(t.StorageRelpath())
 		first := strings.Split(filepath.ToSlash(rel), "/")[0]
-		if !filepath.IsLocal(rel) || rel == "." || first == ".khub" || first == ".git" || first == ".claude" || first == ".agents" || first == ".opencode" || rel == "index.md" || rel == "AGENTS.md" || rel == "CLAUDE.md" {
-			return errs.New("invalid_schema", fmt.Sprintf("Invalid schema at storage.%s.path: path must stay in workspace storage and cannot own khub control files (%s)", name, t.StorageRelpath()))
-		}
 		normalized := filepath.ToSlash(rel)
+		outside := errs.New("invalid_schema", fmt.Sprintf("Invalid schema at storage.%s.path: path must stay in workspace storage and cannot own khub control files (%s)", name, t.StorageRelpath()))
+		// An escape or a control path is refused first, with the same text on
+		// every platform. Device names come next, because Windows IsLocal
+		// refuses them too and the escape text would misname the cause.
+		if filepath.IsAbs(rel) || filepath.VolumeName(rel) != "" || normalized == ".." || strings.HasPrefix(normalized, "../") || rel == "." || first == ".khub" || first == ".git" || first == ".claude" || first == ".agents" || first == ".opencode" || rel == "index.md" || rel == "AGENTS.md" || rel == "CLAUDE.md" {
+			return outside
+		}
+		if err := reservedDevicePart(name, normalized); err != nil {
+			return err
+		}
+		if !filepath.IsLocal(rel) {
+			return outside
+		}
 		if t.Storage.Path != nil {
 			t.Storage.Path = &normalized
 		}
@@ -327,6 +337,40 @@ func validateResolved(resolved *ResolvedSchema) error {
 		types = append(types, t)
 	}
 	return nil
+}
+
+// reservedDevicePart refuses a storage path with a device-named part.
+func reservedDevicePart(name, normalized string) error {
+	for _, part := range strings.Split(normalized, "/") {
+		if ReservedDeviceName(part) {
+			return errs.New("invalid_schema", fmt.Sprintf("Invalid schema at storage.%s.path: '%s' is a reserved device name on Windows (%s); choose another path", name, part, normalized))
+		}
+	}
+	return nil
+}
+
+// reservedDevice holds the names Windows reserves for devices. A file or
+// folder carrying one, with or without an extension, cannot be created there.
+// COM0 and LPT0 are on Microsoft's current list beside 1-9, and Windows reads
+// the superscripts ¹ ² ³ as digits too.
+var reservedDevice = map[string]bool{
+	"con": true, "prn": true, "aux": true, "nul": true, "conin$": true, "conout$": true,
+	"com0": true, "com1": true, "com2": true, "com3": true, "com4": true, "com5": true,
+	"com6": true, "com7": true, "com8": true, "com9": true,
+	"com\u00b9": true, "com\u00b2": true, "com\u00b3": true,
+	"lpt0": true, "lpt1": true, "lpt2": true, "lpt3": true, "lpt4": true, "lpt5": true,
+	"lpt6": true, "lpt7": true, "lpt8": true, "lpt9": true,
+	"lpt\u00b9": true, "lpt\u00b2": true, "lpt\u00b3": true,
+}
+
+// ReservedDeviceName reports whether name, one file or folder name, is a
+// Windows device name. As Windows does, the test is case-insensitive, ignores
+// everything from the first dot and drops trailing spaces, so `con `, `con.`
+// and `con .txt` are all CON. khub refuses these on every platform, so a
+// workspace made anywhere checks out on Windows.
+func ReservedDeviceName(name string) bool {
+	stem, _, _ := strings.Cut(name, ".")
+	return reservedDevice[strings.ToLower(strings.TrimRight(stem, " "))]
 }
 
 func storageOverlap(a, b *ResolvedType) bool {
@@ -370,6 +414,7 @@ func LoadYAML(path string) (*omap.Map, error) {
 // collapse, duplicate-key rejection, and scalar normalization as every
 // authored layer file. name labels errors.
 func ParseDoc(name, text string) (*omap.Map, error) {
+	name = filepath.ToSlash(name) // printed: khub shows every path with '/'
 	if len(strings.TrimSpace(text)) == 0 {
 		return omap.New(), nil
 	}

@@ -15,6 +15,12 @@ type HostOptions = {
 
   // False for a machine with no khub to run.
   hasKhub?: boolean
+
+  // Programs that fail to start, as a spawn of a missing file does.
+  missing?: string[]
+
+  // The paths that exist, when not the workspace's `.khub` under ROOT.
+  files?: string[]
 }
 
 const answer = (fixture: Fixture, isStdoutTruncated = false) => ({
@@ -37,13 +43,20 @@ export function fakeHost(on: On, replies: Fixture[] = [], options: HostOptions =
   const host = {
     clock: mock.clock(on, { now: 0 }),
     ran: [] as string[],
+
+    // The command each khub call ran, the words before its arguments.
+    programs: [] as string[][],
     statuses: [] as Array<string | undefined>,
 
     // Set by a test to cut the stdout of every later khub call.
     isCut: false,
   }
 
-  on('fs.exists', (_$, e) => ({ value: e.path === `${ROOT}/.khub` }))
+  // The kit runs on this machine's platform, so it resolves a Windows path, which is not
+  // absolute here, against its own directory. A path is matched with that prefix too.
+  on('fs.exists', (_$, e) => ({
+    value: (options.files ?? [`${ROOT}/.khub`]).some(file => e.path === file || e.path.endsWith(`/${file}`)),
+  }))
   on('ui.status', (_$, e) => {
     host.statuses.push(e.text)
 
@@ -53,11 +66,13 @@ export function fakeHost(on: On, replies: Fixture[] = [], options: HostOptions =
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   on('process.run', (_$, e) => {
-    if (options.hasKhub === false) throw new Error('spawn khub ENOENT')
+    if (options.hasKhub === false || options.missing?.includes(e.argv[0] ?? '')) throw new Error('spawn khub ENOENT')
 
+    // A call is `<program…> -C <root> <args>`, or `<program…> --version`.
     const at = e.argv.indexOf('-C')
-    const args = at < 0 ? e.argv.slice(1) : e.argv.slice(at + 2)
+    const args = at < 0 ? e.argv.slice(-1) : e.argv.slice(at + 2)
 
+    host.programs.push(e.argv.slice(0, at < 0 ? -1 : at))
     host.ran.push(args.join(' '))
 
     if (args[0] === '--version') return { value: answer({ ...F.version, stdout: options.version ?? F.version.stdout }) }

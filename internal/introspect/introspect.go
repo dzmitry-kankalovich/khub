@@ -42,8 +42,13 @@ func LayerFiles(root string) ([]string, error) {
 			if errors.Is(statErr, fs.ErrNotExist) {
 				continue
 			}
+			// The root-relative path is printed, so in slash form.
+			var pe *fs.PathError
+			if errors.As(statErr, &pe) {
+				statErr = &fs.PathError{Op: pe.Op, Path: filepath.ToSlash(pe.Path), Err: pe.Err}
+			}
 			return nil, errs.New("schema_error",
-				fmt.Sprintf("Cannot read schema %s: %s", p, statErr.Error()))
+				fmt.Sprintf("Cannot read schema %s: %s", filepath.ToSlash(p), statErr.Error()))
 		}
 		if fi.Mode().IsRegular() {
 			out = append(out, ".khub/"+name)
@@ -71,7 +76,8 @@ func LoadSchemaLayers(root string) (*schema.ResolvedSchema, []string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	ontologyPath := filepath.Join(root, ".khub", presets.OntologyFile)
+	// Printed only, so in the slash form khub shows every path in.
+	ontologyPath := filepath.ToSlash(filepath.Join(root, ".khub", presets.OntologyFile))
 	if len(layers) == 0 {
 		return nil, nil, errs.New("schema_error",
 			fmt.Sprintf("Cannot read schema %s: file not found", ontologyPath))

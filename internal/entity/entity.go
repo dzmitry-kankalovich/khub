@@ -220,6 +220,13 @@ func create(root, typeName string, opts CreateOpts) (*CreateResult, error) {
 		return nil, err
 	}
 	explicit := opts.ID != ""
+	// The slug is the file stem (file layout) or the folder name (folder
+	// layout), so a Windows device name is refused before anything is written.
+	// The test is on the final stem, prefix and date applied; a collection row
+	// returned above, since it is not a file.
+	if schema.ReservedDeviceName(slug) {
+		return nil, errs.ReservedSlug(slug, typeName, !explicit)
+	}
 	if idx.Nodes[index.Node{Type: typeName, Slug: slug}] {
 		return nil, errs.SlugTaken(slug, typeName, !explicit)
 	}
@@ -946,7 +953,7 @@ func toAnyList(ss []string) []any {
 func relSlash(root, path string) string {
 	rel, err := filepath.Rel(root, path)
 	if err != nil {
-		return path
+		return filepath.ToSlash(path)
 	}
 	return filepath.ToSlash(rel)
 }

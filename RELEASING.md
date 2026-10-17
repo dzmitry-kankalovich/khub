@@ -1,7 +1,7 @@
 # Releasing khub
 
 A release is a version bump, a green suite, and a tag on `main`. Pushing the tag
-builds four binaries and publishes them; nothing is uploaded by hand.
+builds six binaries and publishes them; nothing is uploaded by hand.
 
 1. Bump `Version` in `internal/version/version.go` and add a section to
    `CHANGELOG.md` (Keep a Changelog format). That constant is the single source
@@ -31,9 +31,10 @@ builds four binaries and publishes them; nothing is uploaded by hand.
 6. Push both: `git push origin main && git push origin vX.Y.Z`.
 
 The tag triggers `.github/workflows/release.yml`, which re-runs the gates,
-builds darwin and linux on amd64 and arm64 with goreleaser, attaches the
-archives and `checksums.txt` to the GitHub release, then assembles and
-publishes the npm package (`@endgame-build/khub`, carrying all four binaries)
+builds darwin, linux and windows (experimental) on amd64 and arm64 with
+goreleaser, attaches the archives and `checksums.txt` to the GitHub release,
+then assembles and publishes the npm package (`@endgame-build/khub`, carrying
+all six binaries)
 to npmjs.org with provenance — a stable tag under the `latest` dist-tag, a
 hyphenated tag (`v0.20.0-rc1`) under `next`, so a prerelease never becomes
 what a bare install resolves. It then proves the channel through both real
@@ -41,6 +42,9 @@ consumer paths — a machine-global `npm install -g` and a scratch per-repo
 `npm install`, each pinned to the tag and each asserting the installed khub
 reports it. The global step also runs `khub --help`, and retries briefly:
 it is the first read after publish, and registry propagation is not instant.
+`verify-macos` and `verify-windows` then install the published package on
+their own runners and run it. `verify-windows` is non-blocking: Windows ships
+as experimental, so a red run there is reported but leaves the release green.
 
 Consumers install with:
 
@@ -84,7 +88,7 @@ Archive names still carry no version (`khub_darwin_arm64.tar.gz`):
 
 ## Dry run
 
-`goreleaser release --snapshot --clean --skip=publish` builds all four archives
+`goreleaser release --snapshot --clean --skip=publish` builds all six archives
 into `dist/` without touching git or GitHub. To exercise the npm packaging
 against them (the assembler refuses `-snapshot`, so name a real-looking
 version), assemble, pack, and install locally:

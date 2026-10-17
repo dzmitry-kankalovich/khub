@@ -7,6 +7,7 @@ package integrity
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -361,6 +362,36 @@ func TestIdGateThreeArms(t *testing.T) {
 	}
 	if count != len(want) {
 		t.Errorf("%d id findings, want %d: %v", count, len(want), got)
+	}
+}
+
+// A hand-named file or folder carrying a device name is an id finding, and the
+// device arm fires before the prefix arm.
+func TestIdGateDeviceSlug(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows refuses a device-named file or opens the device instead")
+	}
+	const reason = "slug is a reserved device name on Windows — rename it with `git mv`, then fix references to it"
+	file := wsFor(t, "build-hub")
+	seed(t, file, "knowledge/decisions/con.md", kv{"type", "adr"}, kv{"title", "Con"},
+		kv{"status", "proposed"}, kv{"created", "2026-01-15"})
+	folder := wsFor(t, "firm-ops")
+	seed(t, folder, "projects/nul/_index.md", kv{"type", "project"}, kv{"title", "Nul"},
+		kv{"updated", "2026-01-15"})
+	for _, c := range []struct{ root, id string }{{file, "adr/con"}, {folder, "project/nul"}} {
+		got := errorKeys(mustValidate(t, c.root, nil, false))
+		if got[[2]string{c.id, "id"}] != reason {
+			t.Errorf("%s: id finding = %q, want %q (all: %v)", c.id, got[[2]string{c.id, "id"}], reason, got)
+		}
+	}
+}
+
+// A collection row is not a file, so a device-named slug passes the id gate.
+func TestIdGateExemptsCollectionDeviceSlug(t *testing.T) {
+	root := collectionWS(t)
+	create(t, root, "repo", "nul", "repo", "acme/nul", "status", "active")
+	if report := mustValidate(t, root, nil, false); len(report.Errors) != 0 {
+		t.Fatalf("errors = %v", report.Errors)
 	}
 }
 

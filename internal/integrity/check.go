@@ -234,7 +234,7 @@ func Check(root string, strict bool) (*CheckReport, error) {
 
 	strayLocators := map[string]bool{}
 	for n := range strays {
-		strayLocators[strayLocator(root, resolved, n.Type, n.Slug)] = true
+		strayLocators[strayLocator(root, scanned, n)] = true
 	}
 	strayPaths := sortedKeys(strayLocators)
 
@@ -278,6 +278,10 @@ func Check(root string, strict bool) (*CheckReport, error) {
 	misplaced, err := misplacedFiles(root, resolved)
 	if err != nil {
 		return nil, err
+	}
+	if extra := templatedMisplaced(scanned); len(extra) > 0 {
+		misplaced = append(misplaced, extra...)
+		sort.SliceStable(misplaced, func(i, j int) bool { return misplaced[i].Path < misplaced[j].Path })
 	}
 	strayTemplates, missingTemplates, err := templateFindings(root, resolved)
 	if err != nil {
@@ -447,7 +451,7 @@ func misplacedFiles(root string, resolved *schema.ResolvedSchema) ([]Misplaced, 
 		accepted := false
 		for _, name := range resolved.Types.Keys() {
 			rt, _ := resolved.Types.Get(name)
-			if rt.AcceptsEntityPath(rel) {
+			if !rt.Templated() && rt.AcceptsEntityPath(rel) {
 				accepted = true
 				break
 			}
@@ -472,12 +476,56 @@ func misplacedFiles(root string, resolved *schema.ResolvedSchema) ([]Misplaced, 
 		if !known {
 			continue
 		}
+		// A templated type claims what its templates place and its `type`
+		// names; the scan holds it, or holds a duplicate templatedMisplaced
+		// reports.
+		if rtype.Templated() && rtype.AcceptsEntityPath(rel) {
+			continue
+		}
 		// StorageRelpath, not CollectionRelpath: a path-less file or folder type
 		// lives under `<name>/`, and the collection default is only right for
-		// collection and singleton layouts.
-		out = append(out, Misplaced{Path: rel, Type: tname, Expected: rtype.StorageRelpath()})
+		// collection and singleton layouts. A templated type names its templates.
+		out = append(out, Misplaced{Path: rel, Type: tname, Expected: rtype.StorageShape()})
 	}
 	return out, nil
+}
+
+// templatedMisplaced is what a templated type's scan holds but cannot place:
+// a file whose slug an earlier file holds (Expected names the holder), and an
+// entity whose directory disagrees with a field its template names (Expected
+// is where that field puts it). A field the entity leaves unset places
+// nothing, so it is never a finding.
+func templatedMisplaced(idx *index.Index) []Misplaced {
+	out := []Misplaced{}
+	for _, d := range idx.Duplicates {
+		out = append(out, Misplaced{Path: d.Path, Type: d.Type, Expected: d.Holder})
+	}
+	for _, node := range idx.Order {
+		rtype, _ := idx.Resolved.Types.Get(node.Type)
+		rel, has := idx.Paths[node]
+		if !rtype.Templated() || !has {
+			continue
+		}
+		tp, caps, ok := rtype.MatchTemplate(rel)
+		if !ok {
+			continue
+		}
+		meta := idx.Meta[node]
+		moved := false
+		want, _, err := tp.Fill(node.Slug, func(name string) (string, bool) {
+			v := metaGet(meta, name)
+			if _, isList := v.([]any); isList || !present(v) {
+				return caps[name], true
+			}
+			s, _ := rtype.PathField(meta, name)
+			moved = moved || s != caps[name]
+			return s, true
+		})
+		if moved && err == nil {
+			out = append(out, Misplaced{Path: rel, Type: node.Type, Expected: want})
+		}
+	}
+	return out
 }
 
 // rglobMD is `sorted(root.rglob("*.md"))`: every regular file whose name ends
@@ -490,6 +538,7 @@ func misplacedFiles(root string, resolved *schema.ResolvedSchema) ([]Misplaced, 
 // already not a pinned contract; this uses the 3.12+ string order.
 func rglobMD(root string, resolved *schema.ResolvedSchema) ([]string, error) {
 	trees := storageTrees(resolved)
+	ignore := resolved.Ignore
 	var out []string
 	var walk func(dir string) error
 	walk = func(dir string) error {
@@ -499,6 +548,9 @@ func rglobMD(root string, resolved *schema.ResolvedSchema) ([]string, error) {
 		}
 		for _, e := range entries {
 			path := filepath.Join(dir, e.Name())
+			if rel, err := filepath.Rel(root, path); err == nil && ignore.Ignored(rel, e.IsDir()) {
+				continue
+			}
 			if e.Type().IsRegular() {
 				name := e.Name()
 				if strings.HasSuffix(name, ".md") {
@@ -536,12 +588,13 @@ func storageTrees(resolved *schema.ResolvedSchema) []string {
 	var trees []string
 	for _, name := range resolved.Types.Keys() {
 		rt, _ := resolved.Types.Get(name)
-		tree := rt.StorageRelpath()
-		if rt.Storage.Layout == schema.LayoutCollection || rt.Storage.Layout == schema.LayoutSingleton {
-			tree = filepath.Dir(tree)
-		}
-		if tree = filepath.ToSlash(filepath.Clean(tree)); tree != "." {
-			trees = append(trees, tree)
+		for _, tree := range rt.StorageRoots() {
+			if rt.Storage.Layout == schema.LayoutCollection || rt.Storage.Layout == schema.LayoutSingleton {
+				tree = filepath.Dir(tree)
+			}
+			if tree = filepath.ToSlash(filepath.Clean(tree)); tree != "." {
+				trees = append(trees, tree)
+			}
 		}
 	}
 	return trees
@@ -606,15 +659,16 @@ func derivativeDangle(resolved *schema.ResolvedSchema, d Dangling, broken map[st
 // strayLocator is integrity._stray_locator: a stray's address — its file path,
 // or "path#slug" for a collection row (N stray rows in one file must not
 // collapse into N copies of the same path).
-func strayLocator(root string, resolved *schema.ResolvedSchema, tname, slug string) string {
-	rtype, _ := resolved.Types.Get(tname)
-	rel, err := filepath.Rel(root, entity.EntityPath(root, rtype, slug))
+func strayLocator(root string, idx *index.Index, node index.Node) string {
+	rtype, _ := idx.Resolved.Types.Get(node.Type)
+	path := entity.EntityPath(root, idx, node)
+	rel, err := filepath.Rel(root, path)
 	if err != nil {
-		rel = entity.EntityPath(root, rtype, slug)
+		rel = path
 	}
 	rel = filepath.ToSlash(rel)
 	if rtype.Storage.Layout == schema.LayoutCollection {
-		return rel + "#" + slug
+		return rel + "#" + node.Slug
 	}
 	return rel
 }
@@ -702,7 +756,7 @@ func danglingEdges(
 					continue
 				}
 				text := pyStr(target)
-				if len(idx.ResolveTarget(rel, text)) == 0 {
+				if !idx.Satisfies(rel, text) {
 					out = append(out, Dangling{node.Type, node.Slug, predicate, text})
 				}
 			}

@@ -13,6 +13,7 @@ import (
 	"github.com/endgame-build/khub/internal/canon"
 	"github.com/endgame-build/khub/internal/errs"
 	"github.com/endgame-build/khub/internal/fsio"
+	"github.com/endgame-build/khub/internal/index"
 	"github.com/endgame-build/khub/internal/omap"
 	"github.com/endgame-build/khub/internal/schema"
 )
@@ -21,7 +22,8 @@ import (
 // flat for a file layout, the one fixed file for a singleton, the shared
 // inventory file for a collection (rows have no path of their own — `path#slug`
 // is the row locator).
-func entityPath(root string, rtype *schema.ResolvedType, slug string) string {
+func entityPath(root string, idx *index.Index, node index.Node) string {
+	rtype, _ := idx.Resolved.Types.Get(node.Type)
 	switch rtype.Storage.Layout {
 	case schema.LayoutCollection:
 		return collectionFile(root, rtype)
@@ -29,11 +31,19 @@ func entityPath(root string, rtype *schema.ResolvedType, slug string) string {
 		// One fixed file regardless of slug (the slug IS the type name).
 		return filepath.Join(root, storagePath(rtype, rtype.Name+"."+rtype.Storage.Fmt))
 	}
+	if rtype.Templated() {
+		// Where this scan found it. Creation supplies the final templated path
+		// separately because the new node has no scan entry yet.
+		if rel, ok := idx.Paths[node]; ok {
+			return filepath.Join(root, filepath.FromSlash(rel))
+		}
+		return filepath.Join(root, filepath.FromSlash(rtype.StorageRelpath()), node.Slug+"."+rtype.Storage.Fmt)
+	}
 	base := filepath.Join(root, storagePath(rtype, rtype.Name))
 	if rtype.Storage.Layout == schema.LayoutFolder {
-		return filepath.Join(base, slug, "_index."+rtype.Storage.Fmt)
+		return filepath.Join(base, node.Slug, "_index."+rtype.Storage.Fmt)
 	}
-	return filepath.Join(base, slug+"."+rtype.Storage.Fmt)
+	return filepath.Join(base, node.Slug+"."+rtype.Storage.Fmt)
 }
 
 // storagePath is Python's `rtype.storage.path or <fallback>`: an absent OR
@@ -189,3 +199,48 @@ func mdNormalized(body string, rtype *schema.ResolvedType) string {
 }
 
 func hasSuffixNewline(s string) bool { return len(s) > 0 && s[len(s)-1] == '\n' }
+
+// templatedPath is the workspace-relative file a new entity of a templated
+// type is written to. Of the templates every field placeholder of which meta
+// supplies, the one naming the most fields wins (the most specific place),
+// the first declared on a tie. A relation value qualified as `type/slug`
+// places its slug.
+func templatedPath(rtype *schema.ResolvedType, slug string, meta *omap.Map) (string, error) {
+	best, bestFields := "", -1
+	var firstMissing []string
+	for _, tp := range rtype.Storage.Templates {
+		rel, missing, err := tp.Fill(slug, func(name string) (string, bool) {
+			return rtype.PathField(meta, name)
+		})
+		var bad *schema.PathValueError
+		if errors.As(err, &bad) {
+			return "", errs.InvalidPathValue(rtype.Name, bad.Field, bad.Value)
+		}
+		if err != nil {
+			return "", err
+		}
+		if len(missing) > 0 {
+			if firstMissing == nil {
+				firstMissing = missing
+			}
+			continue
+		}
+		if n := len(tp.Fields()); n > bestFields {
+			best, bestFields = rel, n
+		}
+	}
+	if bestFields < 0 {
+		return "", errs.PathFieldMissing(rtype.Name, rtype.Storage.Templates[0].String(), firstMissing)
+	}
+	return best, nil
+}
+
+// refuseIgnored refuses to write a new entity where `.khub/ignore` excludes:
+// the scan would never read it back, so the write would vanish.
+func refuseIgnored(root, path string, ignore *schema.IgnoreList, typeName string) error {
+	rel, err := filepath.Rel(root, path)
+	if err != nil || !ignore.Ignored(rel, false) {
+		return nil
+	}
+	return errs.PathIgnored(typeName, filepath.ToSlash(rel))
+}

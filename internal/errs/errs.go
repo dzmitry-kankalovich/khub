@@ -421,3 +421,43 @@ func ServeNeedsTTY() *Located {
 			"(background it, or an agent call will block)",
 	}
 }
+
+// PathFieldMissing is `path_field_missing`: a templated type cannot place a
+// new entity until the fields its path names are given. The message names the
+// flags that supply them.
+func PathFieldMissing(type_, template string, fields []string) *Located {
+	flags := make([]string, len(fields))
+	for i, f := range fields {
+		flags[i] = "--" + f
+	}
+	return &Located{
+		Code: "path_field_missing",
+		Message: fmt.Sprintf("'%s' is stored at %s; pass %s to say where this one goes",
+			type_, template, strings.Join(flags, " and ")),
+		Type: type_,
+	}
+}
+
+// InvalidPathValue is `invalid_path_value`: a field a templated path names
+// holds a value that cannot be one directory name.
+func InvalidPathValue(type_, field, value string) *Located {
+	return &Located{
+		Code: "invalid_path_value",
+		Message: fmt.Sprintf("'%s' cannot place %s in a directory: '%s' is not a usable directory name",
+			field, type_, value),
+		Type:   type_,
+		Target: value,
+	}
+}
+
+// PathIgnored is `path_ignored`: the file a new entity would be written to is
+// excluded by .khub/ignore, so no scan would ever read it back.
+func PathIgnored(type_, path string) *Located {
+	return &Located{
+		Code: "path_ignored",
+		Message: fmt.Sprintf("Refusing to add %s at %s: .khub/ignore excludes that path; "+
+			"remove the pattern or store the type elsewhere", type_, path),
+		Type:   type_,
+		Target: path,
+	}
+}

@@ -118,7 +118,7 @@ func Validate(root string, target *string, strict bool) (*ValidateReport, error)
 	if reviewed != nil {
 		rtype, _ := resolved.Types.Get(reviewed.Type)
 		if rtype.ReadsTemplate() {
-			if text, ok := readBody(entity.EntityPath(root, rtype, reviewed.Slug)); ok {
+			if text, ok := readBody(entity.EntityPath(root, valid, *reviewed)); ok {
 				m := template.Metrics(text)
 				metrics = &m
 			}
@@ -237,6 +237,14 @@ func malformedIdentity(resolved *schema.ResolvedSchema, relpath string) (string,
 		if rtype.Storage.Layout == schema.LayoutCollection {
 			if relpath == rtype.CollectionRelpath() { // the file IS the whole inventory
 				return tname, stem(relpath)
+			}
+			continue
+		}
+		if rtype.Templated() {
+			// An unparseable file cannot say its type: the first type whose
+			// template places it owns the finding.
+			if _, caps, ok := rtype.MatchTemplate(relpath); ok {
+				return tname, caps[schema.SlugField]
 			}
 			continue
 		}
@@ -363,7 +371,7 @@ func idError(rtype *schema.ResolvedType, slug string, meta *omap.Map) (string, b
 		rest = m[2]
 	}
 
-	if m := retiredOrdinal.FindStringSubmatch(rest); m != nil {
+	if m := retiredOrdinal.FindStringSubmatch(rest); m != nil && !rtype.IDOrdinal {
 		// `<prefix>-NNN-<slug>` was retired. Telling it apart from a title that
 		// genuinely starts with digits costs one slugify: "404 handling"
 		// slugifies to `404-handling`, which the slug reproduces; "Public API"
@@ -455,6 +463,9 @@ func relationErrors(
 		}
 		text := pyStr(target)
 		matches := idx.ResolveTarget(rel, text)
+		if len(matches) == 0 && idx.ResolvesToFile(rel, text) {
+			continue
+		}
 		if len(matches) == 0 {
 			errors = append(errors, FieldError{
 				tname, slug, predicate, fmt.Sprintf("no %s '%s' to satisfy relation '%s'",

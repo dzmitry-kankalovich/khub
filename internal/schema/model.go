@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/endgame-build/khub/internal/omap"
+	"github.com/endgame-build/khub/internal/values"
 )
 
 // Relation kinds (model.ResolvedRelation.kind literals).
@@ -41,8 +42,11 @@ const (
 // names that file (default "{type}.{fmt}") instead of a directory.
 type StorageConfig struct {
 	Layout string
-	Path   *string // nil = not declared
+	Path   *string // nil = not declared; the first template on a templated type
 	Fmt    string  // effective format (post storage-matrix derivation)
+	// Templates is set on a templated `file` type: every path its entities
+	// may live at, in declared order. nil on every plain layout.
+	Templates []*PathTemplate
 }
 
 // IsOrphan is khub's orphan rule, stated once. A node no edge reaches or leaves
@@ -88,6 +92,9 @@ type ResolvedRelation struct {
 	Many      bool
 	Required  bool
 	Inverse   *string
+	// ByPath: a value that names no entity by id may name a workspace file by
+	// its path (the owning type's policy `path_refs`). See index.ResolveTarget.
+	ByPath bool
 	// Cycle-checked by `check`. A hierarchy predicate (depends_on, supersedes)
 	// is acyclic by contract; a plain association (related, affects) is not.
 	Acyclic bool
@@ -164,12 +171,96 @@ type ResolvedType struct {
 	// See TypeDecl.IDDate: the minted id carries its mint date,
 	// `<prefix>-<YYYY-MM-DD>-<slug>`.
 	IDDate bool
+	// See TypeDecl.IDOrdinal: a `NNN-` ordinal opening the slug is accepted.
+	IDOrdinal bool
 	// See TypeDecl.Template / TemplateOff: the declared template stem and the
 	// explicit opt-out. Read through TemplateName.
 	Template    *string
 	TemplateOff bool
 	// See TypeDecl.When: the moment to capture this type, in domain language.
 	When *string
+}
+
+// Templated reports whether the type stores its entities by path template.
+func (t *ResolvedType) Templated() bool { return len(t.Storage.Templates) > 0 }
+
+// PathField reads a scalar path placeholder from frontmatter. Relation values
+// place their slug when qualified as type/slug.
+func (t *ResolvedType) PathField(meta *omap.Map, name string) (string, bool) {
+	v, has := meta.Get(name)
+	if !has || v == nil {
+		return "", false
+	}
+	if _, isList := v.([]any); isList {
+		return "", false
+	}
+	s := values.Str(v)
+	if _, isRel := t.Relations.Get(name); isRel {
+		if _, after, qualified := strings.Cut(s, "/"); qualified {
+			s = after
+		}
+	}
+	return s, s != ""
+}
+
+// MatchTemplate is the first of the type's templates rel matches, with its
+// captures.
+func (t *ResolvedType) MatchTemplate(rel string) (*PathTemplate, map[string]string, bool) {
+	rel = filepath.ToSlash(filepath.Clean(rel))
+	for _, tp := range t.Storage.Templates {
+		if caps, ok := tp.Match(rel); ok {
+			return tp, caps, true
+		}
+	}
+	return nil, nil, false
+}
+
+// StorageRoots are the directories (or, for a singleton or collection, the
+// file) the type keeps entities under: each template's literal prefix, else
+// the one storage path.
+func (t *ResolvedType) StorageRoots() []string {
+	if !t.Templated() {
+		return []string{t.StorageRelpath()}
+	}
+	var out []string
+	for _, tp := range t.Storage.Templates {
+		if p := tp.Prefix(); !containsName(out, p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// StorageShape renders where the type's entities live, for a message: the
+// templates joined, else the storage path.
+func (t *ResolvedType) StorageShape() string {
+	if !t.Templated() {
+		return t.StorageRelpath()
+	}
+	parts := make([]string, len(t.Storage.Templates))
+	for i, tp := range t.Storage.Templates {
+		parts[i] = tp.String()
+	}
+	return strings.Join(parts, ", ")
+}
+
+// shapes are templates describing every path the type claims, for overlap.
+func (t *ResolvedType) shapes() []*PathTemplate {
+	if t.Templated() {
+		return t.Storage.Templates
+	}
+	base := t.StorageRelpath()
+	switch t.Storage.Layout {
+	case LayoutCollection, LayoutSingleton:
+		return []*PathTemplate{literalTemplate(base)}
+	case LayoutFolder:
+		tp := literalTemplate(base)
+		tp.segs = append(tp.segs, tseg{name: SlugField}, tseg{lit: "_index." + t.Storage.Fmt})
+		return []*PathTemplate{tp}
+	}
+	tp := literalTemplate(base)
+	tp.segs = append(tp.segs, tseg{name: SlugField, ext: "." + t.Storage.Fmt})
+	return []*PathTemplate{tp}
 }
 
 // TemplateName is the template file stem this type reads
@@ -213,6 +304,9 @@ func (t *ResolvedType) IDShape() string {
 	if t.IDDate {
 		parts = append(parts, "YYYY-MM-DD")
 	}
+	if t.IDOrdinal {
+		parts = append(parts, "[NNN]")
+	}
 	parts = append(parts, "slug")
 	return strings.Join(parts, "-")
 }
@@ -244,10 +338,16 @@ type ResolvedSchema struct {
 	Types          *Ordered[*ResolvedType]
 	BaseAttributes *Ordered[*ResolvedAttribute]
 	BaseRelations  *Ordered[*ResolvedRelation]
+	// Ignore is the workspace's `.khub/ignore`; nil ignores nothing.
+	Ignore *IgnoreList
 }
 
 // StorageRelpath is the effective path, shared by scanning and ownership checks.
+// A templated type answers its first template's literal prefix.
 func (t *ResolvedType) StorageRelpath() string {
+	if t.Templated() {
+		return t.Storage.Templates[0].Prefix()
+	}
 	if t.Storage.Path != nil && *t.Storage.Path != "" {
 		return *t.Storage.Path
 	}
@@ -258,8 +358,14 @@ func (t *ResolvedType) StorageRelpath() string {
 }
 
 // AcceptsEntityPath describes exactly the paths ScanType reads, including depth.
+// A templated type claims a matching file only when the file's `type` names
+// it, which this path-only test cannot see.
 func (t *ResolvedType) AcceptsEntityPath(rel string) bool {
 	rel = filepath.ToSlash(filepath.Clean(rel))
+	if t.Templated() {
+		_, _, ok := t.MatchTemplate(rel)
+		return ok
+	}
 	base := t.StorageRelpath()
 	if t.Storage.Layout == LayoutCollection || t.Storage.Layout == LayoutSingleton {
 		return rel == base

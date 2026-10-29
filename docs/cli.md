@@ -100,6 +100,32 @@ A type stores its entities as `md` (the default: YAML frontmatter + prose body),
 | `khub schema snapshot` | `--format` | record the current resolved schema at `.khub/schema.applied.yaml` as the baseline `schema diff` compares against, replacing any earlier one. The file is tracked in git and records the resolved form, not the layer files: per type its storage, id scheme, `required`/`orphan`, template, and every attribute and relation with its facets. Derived inverses, provenance and `when` are left out, since none of them decides validity. `init` and `upgrade` never write it, so a preset upgrade shows up as pending. Returns `{path, types}` |
 | `khub schema diff` | `--format` | the schema changes since the snapshot: `{pending, changes: [{op, path, from, to}]}`, `op` one of `added`/`removed`/`changed`, `path` dotted (`types.component.attributes.lifecycle.enum`). Key order is not a change. Exits 0 whether or not changes are pending; `pending` says which. With no snapshot it refuses (`no_schema_snapshot`, exit 2) and names `khub schema snapshot`; an unreadable one refuses with `invalid_snapshot` |
 | `khub status` | `--format` | counts per type, draft vs active, orphan and stale counts, OKF-conformance flag (projectable-to-OKF) |
+| `khub doctor` | `--format` | diagnose the workspace itself, not its entities: git, schema, provenance, lock, storage layout. Read-only; see [Diagnosing the workspace](#diagnosing-the-workspace) |
+
+### Diagnosing the workspace
+
+`validate` and `check` judge the entities of a workspace that works. `khub doctor` judges whether it works: run it first when other commands fail in ways their own output does not explain (an `os_error`, a `schema_error`, an `internal_path_error`). It runs six checks, in this order:
+
+| Check | Fails when | Warns when |
+|---|---|---|
+| `workspace` | no `.khub/` at or above the working directory (or `-C`), or the workspace is refused (a OneDrive-synced folder on Windows) | — |
+| `git` | `git` cannot run (`git_unavailable`): `stale` and `backfill` need it | the workspace has no commit (`no_git_history`): dates are not derived from git until it has one |
+| `schema` | the three layer files do not parse or resolve (the loader's own code: `schema_error`, `invalid_schema`, …) | — |
+| `provenance` | `.khub/config.yaml` is missing or does not parse, or its `stale_days` is not a number (`provenance_unreadable`) | it records no `preset` or `version` (`provenance_incomplete`): `upgrade` has nothing to refresh from |
+| `lock` | a write could not take `.khub/generated/locks/workspace.lock` (`lock_unwritable`) | — |
+| `layout` | a type's storage path exists in the wrong shape (a file where a file or folder layout or a path template needs a directory, a directory where a singleton or collection needs a file), or the type's scan stops on a symlink or a permission error (`layout_mismatch`, or the refusal's own code such as `unsafe_path`); one row per type | — |
+
+A check that cannot run reports `skip`: with no workspace every later check skips, and with no schema `layout` skips. A missing storage path is an empty type, not a finding; strays, misplaced files and malformed entities are `check`'s.
+
+Doctor writes nothing. When the lock file exists it is opened for writing and closed, never locked, so a running writer neither blocks doctor nor is blocked by it. When it does not exist yet, doctor creates one probe file in the nearest existing directory above it and removes it at once.
+
+JSON: `{workspace, passed, checks: [{name, status, code, message}]}`. `workspace` is the root, or `null` when none was found; `status` is `ok`, `warn`, `fail` or `skip`; `code` is `null` on `ok` and `skip`. Text prints one `<status>  <name>  <message>` line per check, then `Doctor passed`, `Doctor passed with N warnings` or `Doctor failed: N failed checks`.
+
+Exit codes follow the rest of the CLI:
+
+- **0** — nothing failed. Warnings may be present; the workspace works, read them before relying on `stale` or `upgrade`.
+- **1** — a check failed. The workspace is what is wrong, including when there is none: fix what each `fail` row names (run `khub init <preset>`, install git, repair the schema or `config.yaml`, restore write access to `.khub/generated/`, move the misshapen path aside), then run `doctor` again. Doctor never refuses for the workspace's sake.
+- **2** — a usage error (an unknown flag, an extra argument). Correct the call.
 
 ## Author
 

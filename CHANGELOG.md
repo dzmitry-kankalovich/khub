@@ -2,6 +2,21 @@
 
 Notable changes to khub. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); khub is pre-release.
 
+## [Unreleased]
+
+### Added
+
+- **`khub doctor`.** A read-only self-diagnosis of what every other command
+  assumes: a workspace, git and its history, a schema that resolves, a
+  readable provenance stamp in `.khub/config.yaml`, a workspace lock a write
+  can take, and storage shaped the way each type's layout reads it. Each
+  check reports `ok`, `warn`, `fail` or `skip` with a code and a message. It
+  exits 0 when nothing fails (a warning does not), 1 when a check fails, and
+  2 only for a usage error; a missing workspace is a failed check, not a
+  refusal. The lock probe takes no lock and leaves no file behind.
+- The khub skill in the Claude Code plugin (0.1.5) tells the agent to run
+  `khub doctor` when a failure's own error does not explain it.
+
 ## [0.30.0] — 2026-10-28
 
 Storage can now follow a hub's existing nesting, relations can point to files

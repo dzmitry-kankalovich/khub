@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"testing"
@@ -21,6 +22,8 @@ import (
 // and the release binary gains no test seam.
 const asCLI = "KHUB_TEST_RUN_AS_CLI"
 
+// TestMain holds the package's only TestMain slot: a later one in internal/cli
+// must merge with this one, keeping the asCLI branch first.
 func TestMain(m *testing.M) {
 	if os.Getenv(asCLI) == "1" {
 		os.Exit(Execute(os.Args[1:]))
@@ -29,7 +32,11 @@ func TestMain(m *testing.M) {
 }
 
 // repeatRuns is how many separate processes run each read call. Go seeds map
-// iteration per map, so any output that ranges a map drifts between runs.
+// iteration per map, but a map of up to eight keys often keeps its insertion
+// order: a two-key map ranged in output stays identical across five runs about
+// half the time. So detection is probabilistic, and every tie the workspace
+// builds holds nine entries or more, past one map group, where a ranged map
+// has drifted in every measured case.
 const repeatRuns = 5
 
 // readCalls is every read verb, as the calls the test makes. writeVerbs are
@@ -54,11 +61,13 @@ var readCalls = map[string][][]string{
 		{"query", "--active", "--has", "depends_on"},
 		{"query", "--missing", "repo"},
 		{"query", "--tag", "core"},
+		{"query", "--type", "component", "--limit", "5"},
 	},
 	"search": {
 		{"search", "ledger"},
 		{"search", "ledger OR shard", "--limit", "5"},
 		{"search", "shard", "--plain", "--format", "ids"},
+		{"search", "ledger", "--type", "component"},
 	},
 	"neighbors": {
 		{"neighbors", "cmp-c00"},
@@ -71,26 +80,63 @@ var readCalls = map[string][][]string{
 		{"impact", "cmp-c07"},
 		{"impact", "cmp-c09"},
 		{"impact", "cmp-c08", "--reverse"},
+		{"impact", "ad-2026-01-15-a1", "--predicate", "supersedes", "--reverse"},
 	},
 	"history": {
 		{"history", "ad-2026-01-15-a4"},
-		{"history", "ad-2026-01-15-a1", "--limit", "2"},
+		{"history", "ad-2026-01-15-a4", "--limit", "2"},
+		{"history", "ad-2026-01-15-a3", "--predicate", "supersedes"},
 	},
 	"validate": {{"validate"}, {"validate", "--strict"}, {"validate", "component/cmp-dangle"}, {"validate", "component"}},
 	"check":    {{"check"}, {"check", "--strict"}},
 	"stale":    {{"stale"}, {"stale", "--days", "1"}},
 	"reindex":  {{"reindex", "--dry-run"}},
 	// viz writes its page outside the workspace; the test compares the page.
-	"viz":          {{"viz", "--out", "%VIZ%"}, {"viz", "--out", "%VIZ%", "--type", "component"}},
-	"backfill":     {{"backfill", "--dry-run"}},
-	"wire":         {{"wire", "--dry-run", "--target", "both"}},
-	"upgrade":      {{"upgrade", "--dry-run"}},
-	"schema":       {{"schema"}},
-	"schema types": {{"schema", "types"}},
-	"schema show":  {{"schema", "show", "component"}, {"schema", "show", "adr"}},
-	"schema base":  {{"schema", "base"}},
-	"schema edges": {{"schema", "edges"}},
-	"schema diff":  {{"schema", "diff"}},
+	"viz": {{"viz", "--out", "%VIZ%"}, {"viz", "--out", "%VIZ%", "--type", "component"}},
+	"backfill": {
+		{"backfill", "--dry-run"},
+		{"backfill", "--type", "component", "--dry-run"},
+		{"backfill", "--type", "requirement", "--dry-run"},
+	},
+	"wire": {{"wire", "--dry-run", "--target", "both"}},
+	"upgrade": {
+		{"upgrade", "--dry-run"},
+		{"upgrade", "--dry-run", "--no-schema"},
+		{"upgrade", "--dry-run", "--no-wire", "--format", "json"},
+	},
+	"schema":       {{"schema"}, {"schema", "--format", "json"}},
+	"schema types": {{"schema", "types"}, {"schema", "types", "--format", "json"}},
+	"schema show": {
+		{"schema", "show", "component"}, {"schema", "show", "adr"},
+		{"schema", "show", "component", "--format", "json"},
+	},
+	"schema base":  {{"schema", "base"}, {"schema", "base", "--format", "json"}},
+	"schema edges": {{"schema", "edges"}, {"schema", "edges", "--format", "json"}},
+	"schema diff":  {{"schema", "diff"}, {"schema", "diff", "--format", "json"}},
+}
+
+// metaCalls are help and version, which every command answers apart from the
+// workspace.
+var metaCalls = [][]string{
+	{"--version"}, {"--help"}, {"query", "--help"}, {"schema", "--help"},
+	{"schema", "diff", "--help"}, {"neighbors", "--help"},
+}
+
+// refusalCalls must exit 2. The ones that list candidates (known types,
+// declared predicates, an ambiguous slug's nine matches) print a set, which is
+// where unsorted output would show.
+var refusalCalls = [][]string{
+	{"get", "nope"},
+	{"get", "component/nope"},
+	{"get", "twin"},
+	{"query", "--type", "bogus"},
+	{"neighbors", "cmp-c00", "--predicate", "bogus"},
+	{"impact", "cmp-c00", "--predicate", "bogus"},
+	{"history", "ad-2026-01-15-a4", "--predicate", "bogus"},
+	{"backfill", "--type", "bogus", "--dry-run"},
+	{"schema", "show", "bogus"},
+	{"search", "AND ("},
+	{"stale", "--days", "x"},
 }
 
 // writeVerbs change the workspace, or serve it, so repeating them proves
@@ -186,7 +232,11 @@ func runCLI(t *testing.T, self, dir string, human bool, args ...string) runResul
 // repeatWorkspace builds a graph where ordering has room to vary: ties at
 // every depth, a diamond, a three-node cycle, a dangling edge, orphans,
 // drafts, stale entities with tied dates, a supersession chain, derived
-// inverses, and several types sharing predicates.
+// inverses, and several types sharing predicates. Each tie a call depends on
+// holds nine entries or more (see repeatRuns): twelve components depend on
+// cmp-c00, eleven consume api-api-one, nine ADRs affect cmp-c00, eleven
+// components are stale on one date and lack a required kind, one slug lives
+// in nine types, and the schema diff adds nine attributes.
 func repeatWorkspace(t *testing.T, self string) string {
 	t.Helper()
 	ws := filepath.Join(t.TempDir(), "ws")
@@ -203,7 +253,7 @@ func repeatWorkspace(t *testing.T, self string) string {
 		{"add", "actor", "--title", "Admin"},
 		{"add", "actor", "--title", "Lonely"},
 	}
-	for i := range 12 {
+	for i := range 20 {
 		kind := "service"
 		if i%3 == 1 {
 			kind = "library"
@@ -239,21 +289,33 @@ func repeatWorkspace(t *testing.T, self string) string {
 			"--affects", "cmp-c08"},
 		[]string{"add", "adr", "--title", "A4", "--status", "proposed", "--supersedes", "ad-2026-01-15-a3"},
 	)
-	// depends_on: fan-in ties on c00, a diamond through c04/c05, a chain to
-	// c07, the cycle c08 → c09 → c10 → c08, and c11 bridging both halves.
-	for _, edge := range [][2]string{
+	for i := 1; i <= 7; i++ {
+		steps = append(steps, []string{"add", "adr", "--title", fmt.Sprintf("B%d", i),
+			"--status", "accepted", "--affects", "cmp-c00"})
+	}
+	// depends_on: fan-in ties on c00 (c01–c03, c11, c12–c19), a diamond
+	// through c04/c05, a chain to c07, the cycle c08 → c09 → c10 → c08, and
+	// c11 bridging both halves.
+	edges := [][2]string{
 		{"c01", "c00"}, {"c02", "c00"}, {"c03", "c00"},
 		{"c04", "c01"}, {"c04", "c02"}, {"c05", "c03"}, {"c05", "c02"},
 		{"c06", "c05"}, {"c06", "c04"}, {"c07", "c06"},
 		{"c08", "c09"}, {"c09", "c10"}, {"c10", "c08"},
 		{"c11", "c08"}, {"c11", "c00"},
-	} {
-		steps = append(steps, []string{"link", "cmp-" + edge[0], "depends_on", "cmp-" + edge[1]})
 	}
-	for _, edge := range [][2]string{
+	consumes := [][2]string{
 		{"c04", "api-api-one"}, {"c05", "api-api-one"}, {"c06", "api-api-two"},
 		{"c07", "api-api-two"}, {"c07", "api-api-one"},
-	} {
+	}
+	for i := 12; i < 20; i++ {
+		c := fmt.Sprintf("c%02d", i)
+		edges = append(edges, [2]string{c, "c00"})
+		consumes = append(consumes, [2]string{c, "api-api-one"})
+	}
+	for _, edge := range edges {
+		steps = append(steps, []string{"link", "cmp-" + edge[0], "depends_on", "cmp-" + edge[1]})
+	}
+	for _, edge := range consumes {
 		steps = append(steps, []string{"link", "cmp-" + edge[0], "consumes", edge[1]})
 	}
 	steps = append(steps,
@@ -276,23 +338,39 @@ func repeatWorkspace(t *testing.T, self string) string {
 	if !bytes.Contains(text, []byte(tier)) {
 		t.Fatal("the build-hub ontology no longer declares component.tier as expected")
 	}
-	text = bytes.Replace(text, []byte(tier), []byte(
-		"        cost:\n          type: text\n"+
-			"        region:\n          enum: [eu, us]\n"+
-			"        tier:\n          enum:\n          - tier-0\n"), 1)
+	added := ""
+	for _, name := range []string{"cost", "region", "zone", "sla", "pager", "budget", "vendor", "license", "runtime"} {
+		added += "        " + name + ":\n          type: text\n"
+	}
+	text = bytes.Replace(text, []byte(tier), []byte(added+"        tier:\n          enum:\n          - tier-0\n"), 1)
 	if err := os.WriteFile(ontology, text, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Written by hand: an edge no verb would write, and two entities stale on
-	// the same day.
-	for name, text := range map[string]string{
+	// Written by hand: an edge no verb would write, eleven components stale on
+	// the same day and missing their required kind (cmp-old has it), and the
+	// slug "twin" in every file type, each missing what its type requires
+	// beyond a title.
+	hand := map[string]string{
 		"knowledge/components/cmp-dangle.md": "---\ntype: component\ncreated: 2024-01-01\nupdated: 2024-01-01\n" +
 			"draft: false\ntitle: Dangle\nkind: external\ndepends_on:\n- cmp-ghost\n- cmp-c00\n---\nThe ledger edge.\n",
 		"knowledge/components/cmp-old.md": "---\ntype: component\ncreated: 2024-01-01\nupdated: 2024-01-01\n" +
 			"draft: false\ntitle: Old\nkind: library\n---\n",
 		"knowledge/components/cmp-older.md": "---\ntype: component\ncreated: 2024-01-01\n" +
 			"draft: false\ntitle: Older\nkind: library\n---\n",
+	}
+	for i := 1; i <= 9; i++ {
+		hand[fmt.Sprintf("knowledge/components/cmp-stale-%d.md", i)] = "---\ntype: component\n" +
+			"created: 2024-01-01\nupdated: 2024-01-01\ndraft: false\n" + fmt.Sprintf("title: Stale %d\n", i) + "---\n"
+	}
+	for _, typ := range [][2]string{
+		{"capability", "capabilities"}, {"actor", "actors"}, {"use-case", "use-cases"},
+		{"requirement", "requirements"}, {"adr", "decisions"}, {"system", "systems"},
+		{"component", "components"}, {"api", "apis"}, {"repo", "repos"},
 	} {
+		hand["knowledge/"+typ[1]+"/twin.md"] = "---\ntype: " + typ[0] + "\ncreated: 2024-01-01\n" +
+			"draft: false\ntitle: Twin\n---\n"
+	}
+	for name, text := range hand {
 		if err := os.WriteFile(filepath.Join(ws, filepath.FromSlash(name)), []byte(text), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -343,8 +421,15 @@ func treeDigest(t *testing.T, root string) map[string][32]byte {
 // TestReadVerbsRepeatByteIdentical runs every read call in separate processes,
 // in both output modes, and holds stdout, stderr and the exit code to the
 // first run's bytes. Determinism is contract (.claude/rules/go.md): output
-// that ranges a map or a set would differ between runs.
+// that ranges a map or a set can differ between runs, and over ties of nine
+// or more it has in every measured case (see repeatRuns).
 func TestReadVerbsRepeatByteIdentical(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns several hundred processes; skipped under -short")
+	}
+	if raceEnabled() {
+		t.Skip("each child process is race-instrumented, about 40x slower; plain go test runs it")
+	}
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not on the PATH")
 	}
@@ -372,7 +457,24 @@ func TestReadVerbsRepeatByteIdentical(t *testing.T) {
 					}
 					t.Run(label, func(t *testing.T) {
 						t.Parallel()
-						repeatCall(t, self, ws, name == "viz", human, call)
+						repeatCall(t, self, ws, name == "viz", false, human, call)
+					})
+				}
+			}
+		}
+		for _, group := range []struct {
+			calls   [][]string
+			refused bool
+		}{{metaCalls, false}, {refusalCalls, true}} {
+			for _, call := range group.calls {
+				for _, human := range []bool{false, true} {
+					label := strings.Join(call, " ")
+					if human {
+						label += " (human)"
+					}
+					t.Run(label, func(t *testing.T) {
+						t.Parallel()
+						repeatCall(t, self, ws, false, group.refused, human, call)
 					})
 				}
 			}
@@ -392,9 +494,25 @@ func TestReadVerbsRepeatByteIdentical(t *testing.T) {
 	}
 }
 
+// raceEnabled reports whether this test binary was built with -race.
+func raceEnabled() bool {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return false
+	}
+	for _, s := range info.Settings {
+		if s.Key == "-race" && s.Value == "true" {
+			return true
+		}
+	}
+	return false
+}
+
 // repeatCall runs one call repeatRuns times and fails on the first run whose
-// bytes differ from the first. A viz call also compares the page it wrote.
-func repeatCall(t *testing.T, self, ws string, writesPage, human bool, call []string) {
+// bytes differ from the first. A viz call also compares the page it wrote. A
+// call that must be refused fails unless it exits 2; any other call fails if
+// it does, since a refusal there means the call is wrong.
+func repeatCall(t *testing.T, self, ws string, writesPage, refused, human bool, call []string) {
 	vizOut := filepath.Join(t.TempDir(), "viz.html")
 	args := make([]string, len(call))
 	for i, a := range call {
@@ -404,7 +522,10 @@ func repeatCall(t *testing.T, self, ws string, writesPage, human bool, call []st
 	var firstPage []byte
 	for run := range repeatRuns {
 		got := runCLI(t, self, ws, human, args...)
-		if got.code == 2 {
+		if refused && got.code != 2 {
+			t.Fatalf("expected a refusal (exit 2):\n%s", got)
+		}
+		if !refused && got.code == 2 {
 			t.Fatalf("refused; the call is wrong:\n%s", got)
 		}
 		var page []byte

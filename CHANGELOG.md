@@ -12,6 +12,15 @@ Notable changes to khub. Format follows [Keep a Changelog](https://keepachangelo
   which shows what `--plain` built), the match count before `--limit`, the
   returned count, and whether `--limit` dropped rows. Without the flag the
   output is unchanged; tables and `--format ids` ignore it.
+- The Claude Code plugin (0.1.5) reads a `--receipt` document's `results`, so
+  the compact row for `query --receipt` or `search --receipt` counts and lists
+  its entities. The `khub` skill mentions the flag.
+
+### Changed
+
+- A schema field named `receipt` can no longer be filtered with
+  `query --receipt <value>`: the new option takes precedence, as `query`'s
+  other options already do over a same-named field.
 
 ## [0.30.0] — 2026-10-28
 

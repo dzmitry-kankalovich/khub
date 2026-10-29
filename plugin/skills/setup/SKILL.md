@@ -9,7 +9,7 @@ allowed-tools: Bash
 
 Install the khub CLI on this machine, then set up the current project so any agent reasons in its ontology.
 
-**Done when** khub answers from the workspace: `khub status --format json`, run inside it, prints its counts, and `khub check` runs to a verdict. In Claude Code with the khub plugin, the band above the prompt shows the same counts. A `khub init` that prints success is not the end; step 3 is.
+**Done when** khub answers from the workspace: `khub status --format json`, run inside it, prints its counts, and `khub check` runs to a verdict. A `khub init` that prints success is not the end; step 3 is.
 
 ## 1. Install the CLI
 
@@ -110,7 +110,14 @@ khub status --format json   # counts per type; a fresh preset shows its seeded s
 khub check                  # exits 0 (passed) or 1 (findings); either is a working setup
 ```
 
-Exit 2, an `error.code` in the JSON, or `command not found` means the setup is not done: fix the cause (wrong directory, missing install, bare `khub` after a dev-dependency install) and run both again. In Claude Code with the plugin installed, the band above the prompt should show the same total; the plugin loads at session start, so a band that is missing right after `/plugin install` appears in a new session.
+Exit 2, an `error.code` in the JSON, or `command not found` means the setup is not done: fix the cause (wrong directory, missing install, bare `khub` after a dev-dependency install) and run both again.
+
+The khub plugin's band above the prompt is for the user to see; you cannot, so do not wait on it. It shows the workspace's total only when two things hold:
+
+- Claude Code was started at the workspace or inside it. The plugin finds `.khub/` from the directory the session started in and does not follow a `cd`, so a workspace that `init` created in a subdirectory gets no band until a session starts there.
+- khub is reachable from the workspace root: installed under `<workspace>/node_modules`, installed globally on the `PATH`, or named by the plugin's `binary` setting. A dev dependency installed in a parent directory is none of these.
+
+A plugin installed or updated during an open session loads after `/reload-plugins` or in a new session. Say in the report whether the user should expect the band.
 
 ## 4. Report back
 
@@ -122,6 +129,7 @@ khub is set up.
 - Preset: <name and version from `khub schema --format json` provenance>
 - khub: <version>, installed <per-repo dev dependency | globally>; run it as <`npx @endgame-build/khub` | `khub`>
 - Verified: `khub status` total <n>; `khub check` <passed | n findings>
+- Claude Code band: <expect it with total <n> when Claude Code starts in <workspace> | not expected, because <reason>; to get it, <fix>>
 - Other agents: `npx skills add endgame-build/khub` (Claude Code: `/plugin marketplace add endgame-build/khub`, then `/plugin install khub@khub`)
 - Try next: `khub query`, then `khub add <type> …` for a first entity
 - Unusual: <anything that surprised you — a warning, a skipped step, an old skill folder left to delete — or "nothing">
@@ -131,9 +139,9 @@ khub is set up.
 
 - Never re-run `khub init` in a directory that already has `.khub/` at or above it. Run `khub wire`, or `khub upgrade` after a version bump.
 - Never install or run the unscoped npm name `khub`. It is an unrelated package, and npx downloads and runs it wherever the local install is missing. Always write `@endgame-build/khub`.
-- Never write registry, token or credential configuration (`.npmrc`, environment variables) yourself. That is the human's call.
+- Never write registry, token or credential configuration (`.npmrc`, registry or token environment variables) yourself. That is the human's call.
 - Never leave a partial install behind. If a step fails, report the error and stop.
-- Never report the setup done before step 3 answers.
+- Never report the setup done before the commands in step 3 answer.
 - Never edit the managed block `wire` writes into `CLAUDE.md` or `AGENTS.md`. Re-run `khub wire`; it rewrites the block in place.
 
 ## Next

@@ -3,9 +3,13 @@
 //
 // khub prints them (`init`'s follow-up hint and help text) and writes them into
 // every wired workspace's AGENTS.md and CLAUDE.md, and the docs show them to
-// people and agents. install_test.go reads the docs and fails on any install
-// command that is not one of these, so a rename of the package, the repo, the
-// marketplace or the plugin lands here and the test names every copy to fix.
+// people and agents. install_test.go checks the names against the marketplace
+// manifest, the plugin manifest and the npm package template, and reads the
+// docs it lists: it fails on any install command that is not one of these, and
+// on any `npx` run of a package other than Package. A rename of the package,
+// the repo, the marketplace or the plugin lands here, and the test names every
+// copy in those docs to fix. CHANGELOG.md and the literal strings wire_test.go
+// pins are not checked.
 package install
 
 const (

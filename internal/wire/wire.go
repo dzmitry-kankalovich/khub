@@ -213,7 +213,7 @@ func BuildBlock(spec BlockSpec, importSupported bool) string {
 		Begin,
 		"## khub workspace",
 		"",
-		"This repository is a [khub](https://github.com/endgame-build/khub) " +
+		"This repository is a [khub](https://github.com/" + install.Repo + ") " +
 			"workspace: its domain is modeled as typed entities and typed relations, and " +
 			"the schema is the contract. Reason in that model.",
 		"",

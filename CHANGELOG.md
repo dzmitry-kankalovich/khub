@@ -2,6 +2,17 @@
 
 Notable changes to khub. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); khub is pre-release.
 
+## [Unreleased]
+
+### Added
+
+- **`khub recent`** lists the entities touched within a window, newest first
+  (`--days N`, default 7; `--limit N`). It judges the same date `stale` does:
+  `updated`, else the file's last commit, else `created`. Rows carry `id`,
+  `type`, `slug`, `title`, `effective_date`, `age` and `source`; a `--limit`
+  that drops rows says so in a `note:` line on stderr. The plugin (0.1.5)
+  draws a compact row for it.
+
 ## [0.30.0] — 2026-10-28
 
 Storage can now follow a hub's existing nesting, relations can point to files

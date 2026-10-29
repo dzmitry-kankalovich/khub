@@ -105,10 +105,11 @@ test('get shows the id, the title and the edge count', () => {
   expect(sayOf('khub get a b', [{ id: 'x/a' }, { id: 'x/b' }]).line).toBe('2 entities')
 })
 
-test('query and stale count entities', () => {
+test('query, recent and stale count entities', () => {
   expect(say('khub query --type component --format json', F.query_components).line).toBe('2 entities')
   expect(say('khub query --draft --format json', F.query_draft).line).toBe('no entities')
   expect(sayOf('khub stale --days 30', [{ id: 'x/a' }])).toEqual({ head: 'khub stale', line: '1 entity', tone: 'plain' })
+  expect(say('khub recent --limit 2 --format json', F.recent_limited).line).toBe('2 entities')
 })
 
 test('search shows the top hit, and warns with khub\'s note', () => {
@@ -196,7 +197,7 @@ test('any other verb shows the first line of its note, or nothing', () => {
 const list = (command: string, fixture: Fixture) => previewOf(classify(command, UNIX) as Simple, parseJson(fixture.stdout))
 const listOf = (command: string, json: unknown) => previewOf(classify(command, UNIX) as Simple, json)
 
-test('a query, a search and a stale list show id, title and flags', () => {
+test('a query, a search, a recent and a stale list show id, title and flags', () => {
   expect(list('khub query --type component --format json', F.query_components)).toEqual({
     rows: [
       { text: 'component/cmp-search', note: 'Search', flags: [] },
@@ -206,6 +207,10 @@ test('a query, a search and a stale list show id, title and flags', () => {
   })
   expect(list('khub search --plain search --format json', F.search_hits).rows).toEqual([
     { text: 'component/cmp-search', note: 'Search', flags: [] },
+  ])
+  expect(list('khub recent --limit 2 --format json', F.recent_limited).rows).toEqual([
+    { text: 'actor/act-analyst', note: 'Analyst', flags: [] },
+    { text: 'arc42/arc42', note: 'Architecture', flags: [] },
   ])
   expect(listOf('khub stale', [{ id: 'x/a', title: 'A', draft: true, orphan: true, stale: true }]).rows).toEqual([
     { text: 'x/a', note: 'A', flags: ['draft', 'orphan', 'stale'] },

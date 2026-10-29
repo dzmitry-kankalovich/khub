@@ -142,6 +142,7 @@ function resultOf(call: Simple, json: unknown, note: string): Result {
     }
 
     case 'query':
+    case 'recent':
     case 'stale':
       return entities
 
@@ -230,6 +231,7 @@ function listOf(call: Simple, json: unknown): KhubRow[] {
   switch (call.verb) {
     case 'get':
     case 'query':
+    case 'recent':
     case 'search':
     case 'stale':
       return rows.map(entityRow)

@@ -5,11 +5,13 @@
 // prior index.md (PRJ-001/REQ-PRJ001-03) — and renders an OKF index.md:
 // entities grouped by type, cross-links along resolved edges, stamped with the
 // OKF version it conforms to. --dry-run diffs the new index against the current
-// file and writes nothing. The graph iteration and group-by-type step are
+// file and writes nothing; --check is that diff as a gate. The graph iteration and group-by-type step are
 // shared with viz; only the render target (Markdown vs HTML) differs.
 package reindex
 
 import (
+	"errors"
+	"io/fs"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -47,6 +49,9 @@ type Result struct {
 	// real reindex, which refuses instead. The caller must surface it: the
 	// preview is honest only if it says what the graph is missing.
 	Malformed []string
+	// Missing is set when no index.md exists to diff against (dry run and
+	// check only).
+	Missing bool
 }
 
 // Reindex is reindex.reindex: regenerate index.md from the live graph;
@@ -69,21 +74,47 @@ func reindex(root string, dryRun bool) (*Result, error) {
 	}
 	path := filepath.Join(root, IndexName)
 	if dryRun {
-		current := ""
-		if raw, rerr := fsio.ReadFile(root, path); rerr == nil {
-			current = string(raw)
-		}
-		diff := unifiedDiff(
-			splitLinesKeepEnds(current), splitLinesKeepEnds(content), IndexName, IndexName)
+		diff, missing := diffAgainstCurrent(root, path, content)
 		return &Result{
 			Count: count, Path: path, Content: content, Diff: diff,
-			Wrote: false, Malformed: malformed,
+			Wrote: false, Malformed: malformed, Missing: missing,
 		}, nil
 	}
 	if err := fsio.AtomicWriteIn(root, path, []byte(content)); err != nil {
 		return nil, err
 	}
 	return &Result{Count: count, Path: path, Content: content, Wrote: true}, nil
+}
+
+// Check is `khub reindex --check`: the dry-run diff, as a gate. It writes
+// nothing and takes no lock. Unlike a dry run it refuses an incomplete scan,
+// exactly as a real reindex does: a verdict of "current" or "stale" over a
+// graph missing whole files would be wrong either way. An empty Diff means
+// index.md matches what reindex would write.
+func Check(root string) (*Result, error) {
+	content, count, _, err := buildIndexDoc(root, false)
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(root, IndexName)
+	diff, missing := diffAgainstCurrent(root, path, content)
+	return &Result{
+		Count: count, Path: path, Content: content, Diff: diff, Missing: missing,
+	}, nil
+}
+
+// diffAgainstCurrent diffs the derived index against the file on disk. An
+// unreadable or absent file diffs as empty, so its diff is the whole index;
+// the bool reports an absent one.
+func diffAgainstCurrent(root, path, content string) (string, bool) {
+	current := ""
+	raw, rerr := fsio.ReadFile(root, path)
+	if rerr == nil {
+		current = string(raw)
+	}
+	diff := unifiedDiff(
+		splitLinesKeepEnds(current), splitLinesKeepEnds(content), IndexName, IndexName)
+	return diff, errors.Is(rerr, fs.ErrNotExist)
 }
 
 // BuildIndexDoc is reindex.build_index_doc: the rendered OKF index.md and its

@@ -240,6 +240,42 @@ func TestReindexRefusesWhenACollectionIsMalformed(t *testing.T) {
 	}
 }
 
+// Check is the dry-run diff as a gate: it writes nothing, reports a missing
+// file as missing, and refuses a malformed scan instead of judging a partial
+// graph.
+func TestCheckStaleMissingAndMalformed(t *testing.T) {
+	root := collectionWS(t)
+	create(t, root, "repo", "svc-a", "repo", "acme/a", "status", "active")
+	_ = os.Remove(filepath.Join(root, "index.md"))
+
+	result, err := Check(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Missing || result.Diff == "" || result.Wrote {
+		t.Fatalf("missing index: Missing=%v Wrote=%v diff=%q", result.Missing, result.Wrote, result.Diff)
+	}
+	if _, serr := os.Stat(filepath.Join(root, "index.md")); !os.IsNotExist(serr) {
+		t.Fatal("check wrote index.md")
+	}
+
+	mustReindex(t, root, false)
+	result, err = Check(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Missing || result.Diff != "" {
+		t.Fatalf("current index: Missing=%v diff=%q", result.Missing, result.Diff)
+	}
+
+	collection := "knowledge/architecture/repos.yaml"
+	writeRaw(t, root, collection,
+		readRaw(t, root, collection)+"svc-a:\n  repo: acme/dup\n  status: active\n")
+	if _, err := Check(root); locatedCode(err) != "malformed_projection" {
+		t.Fatalf("check over a malformed scan: err = %v, want malformed_projection", err)
+	}
+}
+
 // --- helpers -----------------------------------------------------------------
 
 func frontmatterOf(t *testing.T, content string) *omap.Map {

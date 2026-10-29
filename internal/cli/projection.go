@@ -1,6 +1,7 @@
 // projection.go ports cli/projection_cmd.py: the derived projection writers.
-// Neither gates — both are no-op-safe reads that write a derived, disposable
-// artifact, so an empty workspace is a success. Neither takes --format either:
+// Both are no-op-safe reads that write a derived, disposable artifact, so an
+// empty workspace is a success. The one gate is `reindex --check`, which exits
+// 1 when index.md has drifted from the graph. Neither takes --format either:
 // they print prose, and only the shared error boundary emits JSON.
 
 package cli
@@ -20,13 +21,19 @@ import (
 )
 
 func registerReindex(root *cobra.Command) {
-	var dryRun bool
-	cmd := newCmd("reindex", "Regenerate the OKF index.md from the graph: khub reindex [--dry-run].",
+	var dryRun, check bool
+	cmd := newCmd("reindex", "Regenerate the OKF index.md from the graph: khub reindex [--dry-run | --check].",
 		"", func(cmd *cobra.Command, args []string) error {
+			if dryRun && check {
+				return usageBox(cmd, "Options --dry-run and --check cannot be used together.")
+			}
 			return Guard("text", func() error {
 				ws, err := resolveRoot()
 				if err != nil {
 					return err
+				}
+				if check {
+					return reindexCheck(ws)
 				}
 				result, err := reindex.Reindex(ws, dryRun)
 				if err != nil {
@@ -70,7 +77,32 @@ func registerReindex(root *cobra.Command) {
 	cmd.Args = clickArity(0)
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
 		"Print the diff against the current index.md and write nothing.")
+	cmd.Flags().BoolVar(&check, "check", false,
+		"Exit 1 if index.md is missing or stale, printing the diff; write nothing.")
 	root.AddCommand(cmd)
+}
+
+// reindexCheck is the --check gate: the dry-run diff, and exit 1 (a gate
+// failed — the workspace is wrong, not the call) when there is one. The
+// corrective call goes to stderr so stdout stays the diff alone.
+func reindexCheck(ws string) error {
+	result, err := reindex.Check(ws)
+	if err != nil {
+		return err
+	}
+	if result.Diff == "" {
+		fmt.Println("index.md is up to date")
+		return nil
+	}
+	if _, werr := fmt.Fprint(os.Stdout, result.Diff); werr != nil {
+		return werr
+	}
+	state := "stale"
+	if result.Missing {
+		state = "missing"
+	}
+	fmt.Fprintf(os.Stderr, "index.md is %s. Run `khub reindex` to regenerate it.\n", state)
+	return &ExitError{Code: 1}
 }
 
 func registerViz(root *cobra.Command) {

@@ -15,9 +15,9 @@ it was written. Neither was caught, because nothing checks prose against prose.
 | Behaviour | Canonical home | Behaviour pinned by |
 |---|---|---|
 | Commands, arguments, `--<field>` options, JSON output shapes, error codes, exit codes, `check` buckets and which fail the gate | [`docs/cli.md`](../../docs/cli.md) | `parity/cases/**/expected/` |
+| What khub does with the files: validation and `--strict`, entity formats, collections, the body-template keys and the findings bodies raise | [`docs/cli.md`](../../docs/cli.md) ("Validation and open schema" through "Body templates"); the full row model in [`docs/collections-design.md`](../../docs/collections-design.md) | parity |
 | Every command's flags and help text | [`docs/cli-reference.md`](../../docs/cli-reference.md) — generated, never hand-edited | `parity/tools/gen_cli_reference.sh`, drift-checked in CI |
-| Schema vocabulary: layers, base block, storage layouts and formats, path templates, `.khub/ignore`, ids, body templates, `--strict` | [`docs/schema.md`](../../docs/schema.md) | `internal/schema` tests, parity |
-| Collection rows: identity, writes, malformed files, git attribution | [`docs/collections-design.md`](../../docs/collections-design.md) | parity |
+| Authoring the schema: the three layers, the base block, storage layouts and paths, path templates, `.khub/ignore`, ids, writing a template | [`docs/schema.md`](../../docs/schema.md) — it links to `docs/cli.md` for the contract above rather than restating it | `internal/schema` tests, parity |
 | A preset's types and relations | the preset's YAML under `presets/`; `docs/<preset>-preset.md` is its reading copy | `khub init` + parity |
 | The Claude Code plugin, as a user sees it | [`docs/plugin.md`](../../docs/plugin.md) | `claude plugin test plugin` |
 | The plugin's engine rules and the CLI fields it reads | [`.claude/rules/plugin.md`](plugin.md) | `plugin/tests/fixtures.ts` |
@@ -39,18 +39,29 @@ disagree, the fixture is the behaviour and the page is the bug.
   run. It teaches; it does not specify. A behaviour it demonstrates still has
   its home above.
 - **The README** summarizes and links.
-- **The agent skills** (`plugin/skills/*/SKILL.md`) are a surface, not a doc: an
-  agent reads them without the repo, so they carry the commands they use. A
-  change to `docs/cli.md` that moves a command a skill names updates the skill
-  in the same commit.
+- **Agent surfaces** are not docs: an agent reads them without opening the
+  canonical page, so they carry what they need. There are two kinds.
+  - Shipped to users: the skills (`plugin/skills/*/SKILL.md`) and the block
+    `khub wire` writes into a workspace's `CLAUDE.md`/`AGENTS.md`
+    (`internal/wire/wire.go`). They carry the commands they tell an agent to
+    run.
+  - Read by contributors' agents: this repo's `CLAUDE.md`, `AGENTS.md` and
+    `.claude/rules/*.md`. They carry the invariant a change must keep (the
+    exit-code split in `cli.md`, the layout × format axes in `CLAUDE.md`) and
+    point at the canonical page for the detail.
+
+  A change that moves a behaviour an agent surface names updates that surface
+  in the same commit. Changing the wired block moves parity fixtures; re-record
+  it as a behaviour change.
 - **The changelog** records what changed in a release, in words. It is history,
   not a spec, and is never edited to track later behaviour.
 
 ## When you change behaviour
 
 1. Update the canonical home in the same commit as the code and the fixtures.
-2. Grep the rationale docs for the old behaviour —
-   `grep -rn '<flag or code>' docs/ README.md`. A restatement you find is a
-   violation: replace it with a link, don't update the copy.
+2. Grep for the old behaviour everywhere it may be named —
+   `grep -rn '<flag or code>' docs/ README.md CLAUDE.md AGENTS.md .claude/rules plugin/skills internal/wire`.
+   In a rationale doc or the README, a restatement is a violation: replace it
+   with a link, don't update the copy. In an agent surface, update it.
 3. Planned work is design, not behaviour: the memo may describe a verb that
    has not shipped, and `docs/cli.md` names it as planned.

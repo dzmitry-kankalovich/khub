@@ -2,6 +2,7 @@ package doctor_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -44,7 +45,12 @@ func tree(t *testing.T, root string) []string {
 			return err
 		}
 		rel, _ := filepath.Rel(root, p)
-		out = append(out, rel)
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		// The mtime too: a probe created and removed in a directory moves it.
+		out = append(out, rel+" "+info.ModTime().String())
 		return nil
 	})
 	if err != nil {
@@ -72,7 +78,7 @@ func TestHealthyWorkspacePassesAndWritesNothing(t *testing.T) {
 		for _, c := range r.Checks {
 			names = append(names, c.Name)
 		}
-		if got := strings.Join(names, ","); got != "workspace,git,schema,provenance,lock,layout" {
+		if got := strings.Join(names, ","); got != strings.Join(doctor.Names, ",") {
 			t.Fatalf("check order: %s", got)
 		}
 		if after := tree(t, ws); strings.Join(before, "\n") != strings.Join(after, "\n") {
@@ -102,14 +108,42 @@ func TestGitMissingFails(t *testing.T) {
 	}
 }
 
-func TestNoGitHistoryWarns(t *testing.T) {
+func TestGitStates(t *testing.T) {
 	ws := newWorkspace(t)
-	r := doctor.Run(ws, nil)
-	c := find(t, r, "git")
 	// The temp dir may sit inside a repository on a developer machine; only
 	// assert the outcome where it cannot.
-	if c.Status == doctor.Warn && (c.Code != "no_git_history" || !r.Passed()) {
-		t.Fatalf("a warning must not fail the run: %+v", c)
+	r := doctor.Run(ws, nil)
+	if c := find(t, r, "git"); c.Status == doctor.Warn && (c.Code != "not_a_git_repository" || !r.Passed()) {
+		t.Fatalf("outside git: %+v", c)
+	}
+	git := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", ws}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q", ".")
+	if c := find(t, doctor.Run(ws, nil), "git"); c.Status != doctor.Warn || c.Code != "no_git_history" {
+		t.Fatalf("unborn HEAD: %+v", c)
+	}
+	git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "x")
+	if c := find(t, doctor.Run(ws, nil), "git"); c.Status != doctor.OK {
+		t.Fatalf("committed: %+v", c)
+	}
+}
+
+func TestGitThatAlwaysFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a shell-script git needs a unix shell")
+	}
+	ws := newWorkspace(t)
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	if c := find(t, doctor.Run(ws, nil), "git"); c.Status != doctor.Fail || c.Code != "git_unavailable" {
+		t.Fatalf("broken git: %+v", c)
 	}
 }
 
@@ -222,5 +256,94 @@ func TestLayoutMismatchNamesEveryType(t *testing.T) {
 	}
 	if len(failed) != 2 {
 		t.Fatalf("want one row per broken type, got %v", failed)
+	}
+}
+
+func setConfig(t *testing.T, ws, key, value string) {
+	t.Helper()
+	cfg := filepath.Join(ws, ".khub", "config.yaml")
+	raw, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(raw), "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(line, key+":") {
+			lines[i] = key + ": " + value
+		}
+	}
+	if err := os.WriteFile(cfg, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProvenanceAgainstShippedPreset(t *testing.T) {
+	ws := newWorkspace(t)
+	setConfig(t, ws, "version", "99.0.0")
+	if c := find(t, doctor.Run(ws, nil), "provenance"); c.Status != doctor.Warn || c.Code != "provenance_newer" {
+		t.Fatalf("newer than shipped: %+v", c)
+	}
+	setConfig(t, ws, "preset", "nosuchpreset")
+	c := find(t, doctor.Run(ws, nil), "provenance")
+	if c.Status != doctor.Warn || c.Err == nil {
+		t.Fatalf("unknown preset: %+v", c)
+	}
+}
+
+func TestStorageAncestorIsAFile(t *testing.T) {
+	ws := newWorkspace(t)
+	p := filepath.Join(ws, "knowledge")
+	if err := os.RemoveAll(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := doctor.Run(ws, nil)
+	c := find(t, r, "layout")
+	if c.Status != doctor.Fail || c.Code != "layout_mismatch" || c.Err != nil ||
+		!strings.Contains(c.Message, "knowledge is not a directory") {
+		t.Fatalf("ancestor file: %+v", c)
+	}
+	if c := find(t, r, "read"); c.Status != doctor.Skip {
+		t.Fatalf("read ran over a broken layout: %+v", c)
+	}
+}
+
+func unixDenial(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("chmod does not deny here")
+	}
+}
+
+func TestReadOnlyStorageFails(t *testing.T) {
+	unixDenial(t)
+	ws := newWorkspace(t)
+	p := filepath.Join(ws, "knowledge", "requirements")
+	if err := os.Chmod(p, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(p, 0o755) })
+	c := find(t, doctor.Run(ws, nil), "layout")
+	if c.Status != doctor.Fail || c.Code != "storage_unwritable" {
+		t.Fatalf("read-only storage: %+v", c)
+	}
+}
+
+func TestUnreadableDirectoryFailsRead(t *testing.T) {
+	unixDenial(t)
+	ws := newWorkspace(t)
+	junk := filepath.Join(ws, "junk")
+	if err := os.Mkdir(junk, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(junk, 0o755) })
+	r := doctor.Run(ws, nil)
+	if c := find(t, r, "read"); c.Status != doctor.Fail || c.Err == nil {
+		t.Fatalf("unreadable dir: %+v", c)
+	}
+	if r.Passed() {
+		t.Fatal("doctor passed over a workspace check cannot read")
 	}
 }

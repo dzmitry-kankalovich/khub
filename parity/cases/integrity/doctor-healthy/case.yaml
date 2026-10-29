@@ -1,6 +1,6 @@
 # doctor diagnoses the workspace itself. With no workspace it reports a failed
 # check (exit 1), never a refusal. A fresh workspace outside git passes with a
-# warning; once committed it passes clean. An extra argument is a usage error.
+# not_a_git_repository warning; once committed it passes clean. An extra argument is a usage error.
 steps:
 - argv: ["doctor"]
 - argv: ["init", "build-hub", ".", "--no-wire"]

@@ -99,7 +99,10 @@ func doctorHuman(report *doctor.Report, rows []any) {
 			warned++
 		}
 		message, _ := rows[i].(*omap.Map).Get("message")
-		fmt.Printf("%-4s  %-*s  %s\n", c.Status, width, c.Name, message)
+		// One line per check: a YAML parse error carries a multi-line
+		// pointer at the fault, which the JSON keeps whole.
+		line, _, _ := strings.Cut(message.(string), "\n")
+		fmt.Printf("%-4s  %-*s  %s\n", c.Status, width, c.Name, line)
 	}
 	var tail []string
 	if warned > 0 {

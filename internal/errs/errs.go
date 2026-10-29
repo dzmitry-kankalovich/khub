@@ -320,11 +320,15 @@ func PathIsCollection(rel, type_ string, ids []string) *Located {
 	if len(ids) > shown {
 		list = fmt.Sprintf("%s and %d more", strings.Join(ids[:shown], ", "), len(ids)-shown)
 	}
+	noun := "entities"
+	if len(ids) == 1 {
+		noun = "entity"
+	}
 	return &Located{
 		Code: "path_is_collection",
-		Message: fmt.Sprintf("'%s' is a %s collection holding %d entities: %s. "+
+		Message: fmt.Sprintf("'%s' is a %s collection holding %d %s: %s. "+
 			"Get one by id (khub get <id>) or list them (khub query --type %s)",
-			rel, type_, len(ids), list, type_),
+			rel, type_, len(ids), noun, list, type_),
 		Type:   type_,
 		Target: rel,
 	}

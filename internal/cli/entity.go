@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -113,11 +114,21 @@ func registerGet(root *cobra.Command) {
 				if len(args) > 1 && format == "raw" {
 					return errs.New("batch_raw", "Raw output requires exactly one ID")
 				}
-				get := entity.GetMany
+				var views []*entity.EntityView
 				if byPath {
-					get = entity.GetManyByPath
+					if slices.Contains(args, "") {
+						return &errs.Usage{Message: "An empty string is not a file path"}
+					}
+					// A relative path reads from the working directory, as
+					// --body-file does; -C picks the workspace, not the base.
+					cwd, cerr := os.Getwd()
+					if cerr != nil {
+						return cerr
+					}
+					views, err = entity.GetManyByPath(ws, cwd, args, edges)
+				} else {
+					views, err = entity.GetMany(ws, args, edges)
 				}
-				views, err := get(ws, args, edges)
 				if err != nil {
 					return err
 				}
@@ -141,7 +152,7 @@ func registerGet(root *cobra.Command) {
 			})
 		})
 	cmd.Flags().BoolVar(&edges, "edges", false, "Include stored and derived edges.")
-	cmd.Flags().BoolVar(&byPath, "path", false, "Read each ID as a file path, workspace-relative or absolute, and get the entity stored there.")
+	cmd.Flags().BoolVar(&byPath, "path", false, "Read each ID as a file path, relative to the current directory or absolute, and get the entity in it.")
 	cmd.Flags().StringVar(&format, "format", "text", "json, table, raw, or text (Rich on a TTY).")
 	root.AddCommand(cmd)
 }

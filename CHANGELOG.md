@@ -2,6 +2,17 @@
 
 Notable changes to khub. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); khub is pre-release.
 
+## [Unreleased]
+
+### Added
+
+- **`--receipt` on `query` and `search`.** The JSON output becomes
+  `{"receipt": {...}, "results": [...]}`: the receipt echoes the filters or
+  query the call applied (for `search`, also the FTS5 expression that ran,
+  which shows what `--plain` built), the match count before `--limit`, the
+  returned count, and whether `--limit` dropped rows. Without the flag the
+  output is unchanged; tables and `--format ids` ignore it.
+
 ## [0.30.0] — 2026-10-28
 
 Storage can now follow a hub's existing nesting, relations can point to files

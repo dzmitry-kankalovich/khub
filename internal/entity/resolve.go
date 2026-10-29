@@ -236,42 +236,32 @@ func entityEdges(
 	// named `<source type>.<predicate>`, the key `search` counts it under. The
 	// derived edge is qualified `type/slug` — the source type is not
 	// recoverable from a bare slug, unlike a stored forward edge.
-	for _, other := range idx.Order {
-		if other == node { // a self-reference is not its own inverse
-			continue
-		}
-		emeta := idx.Meta[other]
+	for _, in := range inboundEdges(idx, resolved, node) {
+		other := index.Node{Type: in.SourceType, Slug: in.SourceSlug}
 		otype, _ := resolved.Types.Get(other.Type)
-		for _, predicate := range otype.Relations.Keys() {
-			rel, _ := otype.Relations.Get(predicate)
-			value, _ := emeta.Get(predicate)
-			if !truthy(value) {
-				continue
-			}
-			name := other.Type + "." + predicate
-			if rel.Inverse != nil {
-				name = *rel.Inverse
-			}
-			for _, target := range asTargetList(value) {
-				if idx.ResolveTarget(rel, target)[node] {
-					edges = append(edges, Edge{
-						Predicate:       name,
-						Target:          other.Type + "/" + other.Slug,
-						Derived:         true,
-						ResolvedTargets: []string{other.ID()},
-					})
-				}
-			}
+		rel, _ := otype.Relations.Get(in.Predicate)
+		name := other.Type + "." + in.Predicate
+		if rel.Inverse != nil {
+			name = *rel.Inverse
 		}
+		edges = append(edges, Edge{
+			Predicate:       name,
+			Target:          other.Type + "/" + other.Slug,
+			Derived:         true,
+			ResolvedTargets: []string{other.ID()},
+		})
 	}
 	return edges
 }
 
-// inboundEdges is every edge from another entity that resolves to node.
+// inboundEdges is every edge from another entity that resolves to node, once
+// per (source, predicate): a hand-edited source naming node in several
+// spellings (`[cmp-search, component/cmp-search]`) is one edge, as the graph's
+// addEdge counts it, so `get --edges`, `remove` and `neighbors --in` agree.
 func inboundEdges(idx *index.Index, resolved *schema.ResolvedSchema, node index.Node) []Inbound {
 	inbound := []Inbound{}
 	for _, other := range idx.Order {
-		if other == node {
+		if other == node { // a self-reference is not its own inverse
 			continue
 		}
 		emeta := idx.Meta[other]
@@ -289,6 +279,7 @@ func inboundEdges(idx *index.Index, resolved *schema.ResolvedSchema, node index.
 						SourceSlug: other.Slug,
 						Predicate:  predicate,
 					})
+					break
 				}
 			}
 		}

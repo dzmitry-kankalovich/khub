@@ -8,6 +8,8 @@ package entity
 import (
 	"path/filepath"
 	"reflect"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/endgame-build/khub/internal/index"
@@ -129,21 +131,60 @@ func TestGetEdgesIncludesInboundWithoutInverse(t *testing.T) {
 
 	view, err := Get(ws, cmp.Slug, true)
 	requireNoError(t, err)
-	got := map[string]Edge{}
-	for _, e := range view.Edges {
-		got[e.Predicate] = e
-	}
-	if len(view.Edges) != 2 {
-		t.Fatalf("edges = %#v", view.Edges)
-	}
-	want := map[string]Edge{
-		"serves": {Predicate: "serves", Target: "use-case/" + uc.Slug, Derived: true,
+	// Scan order, which follows the schema's type order: use-case, then requirement.
+	want := []Edge{
+		{Predicate: "serves", Target: "use-case/" + uc.Slug, Derived: true,
 			ResolvedTargets: []string{"use-case/" + uc.Slug}},
-		"requirement.realized_in": {Predicate: "requirement.realized_in", Target: "requirement/" + req.Slug,
-			Derived: true, ResolvedTargets: []string{"requirement/" + req.Slug}},
+		{Predicate: "requirement.realized_in", Target: "requirement/" + req.Slug, Derived: true,
+			ResolvedTargets: []string{"requirement/" + req.Slug}},
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("edges = %#v, want %#v", got, want)
+	if !reflect.DeepEqual(view.Edges, want) {
+		t.Fatalf("edges = %#v, want %#v", view.Edges, want)
+	}
+}
+
+// A hand-edited source that names the target in several spellings is one
+// inbound edge per (source, predicate), as the graph counts it — with or
+// without a declared inverse — and remove's inbound count agrees.
+func TestGetEdgesDedupesInboundSpellings(t *testing.T) {
+	ws := newWS(t, "build-hub")
+	cmp, err := Create(ws, "component", CreateOpts{
+		Fields: fields("title", "Search", "kind", "service"), UseTemplate: true})
+	requireNoError(t, err)
+	uc, err := Create(ws, "use-case", CreateOpts{
+		Fields: fields("title", "Find a document", "trigger", "human", "served_by", cmp.Slug), UseTemplate: true})
+	requireNoError(t, err)
+	req, err := Create(ws, "requirement", CreateOpts{
+		Fields: fields("title", "Search answers fast", "kind", "non-functional", "realized_in", cmp.Slug), UseTemplate: true})
+	requireNoError(t, err)
+
+	spellings := "[" + cmp.Slug + ", component/" + cmp.Slug + ", " + strings.ToUpper(cmp.Slug) + "]"
+	for _, e := range []struct {
+		path, field string
+	}{{uc.Path, "served_by"}, {req.Path, "realized_in"}} {
+		text := readFile(t, e.path)
+		re := regexp.MustCompile(`(?m)^` + e.field + `:.*(\n *- .*)*$`)
+		if !re.MatchString(text) {
+			t.Fatalf("%s: no %s line in\n%s", e.path, e.field, text)
+		}
+		writeFile(t, e.path, re.ReplaceAllLiteralString(text, e.field+": "+spellings))
+	}
+
+	view, err := Get(ws, cmp.Slug, true)
+	requireNoError(t, err)
+	want := []Edge{
+		{Predicate: "serves", Target: "use-case/" + uc.Slug, Derived: true,
+			ResolvedTargets: []string{"use-case/" + uc.Slug}},
+		{Predicate: "requirement.realized_in", Target: "requirement/" + req.Slug, Derived: true,
+			ResolvedTargets: []string{"requirement/" + req.Slug}},
+	}
+	if !reflect.DeepEqual(view.Edges, want) {
+		t.Fatalf("edges = %#v, want %#v", view.Edges, want)
+	}
+
+	resolved, idx := buildIndex(t, ws)
+	if got := inboundEdges(idx, resolved, index.Node{Type: "component", Slug: cmp.Slug}); len(got) != 2 {
+		t.Fatalf("inbound = %#v, want 2 edges", got)
 	}
 }
 

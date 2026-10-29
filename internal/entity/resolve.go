@@ -231,10 +231,11 @@ func entityEdges(
 			edges = append(edges, Edge{Predicate: predicate, Target: target, ResolvedTargets: ids})
 		}
 	}
-	// Derived inverses: any stored edge declaring an `inverse` that resolves to
-	// us. The derived edge is qualified `type/slug` — the source type is not
-	// recoverable from a bare slug (any type may declare the inverse), unlike a
-	// stored forward edge.
+	// Derived inbound edges: every stored edge on another entity that resolves
+	// to us. A relation declaring an `inverse` is named by it; any other is
+	// named `<source type>.<predicate>`, the key `search` counts it under. The
+	// derived edge is qualified `type/slug` — the source type is not
+	// recoverable from a bare slug, unlike a stored forward edge.
 	for _, other := range idx.Order {
 		if other == node { // a self-reference is not its own inverse
 			continue
@@ -243,17 +244,18 @@ func entityEdges(
 		otype, _ := resolved.Types.Get(other.Type)
 		for _, predicate := range otype.Relations.Keys() {
 			rel, _ := otype.Relations.Get(predicate)
-			if rel.Inverse == nil {
-				continue
-			}
 			value, _ := emeta.Get(predicate)
 			if !truthy(value) {
 				continue
 			}
+			name := other.Type + "." + predicate
+			if rel.Inverse != nil {
+				name = *rel.Inverse
+			}
 			for _, target := range asTargetList(value) {
 				if idx.ResolveTarget(rel, target)[node] {
 					edges = append(edges, Edge{
-						Predicate:       *rel.Inverse,
+						Predicate:       name,
 						Target:          other.Type + "/" + other.Slug,
 						Derived:         true,
 						ResolvedTargets: []string{other.ID()},

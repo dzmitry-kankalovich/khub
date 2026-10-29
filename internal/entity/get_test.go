@@ -112,6 +112,41 @@ func TestGetEdgesIncludesDerivedInverses(t *testing.T) {
 	}
 }
 
+// An inbound edge through a relation with no declared inverse is listed too,
+// named `<source type>.<predicate>` as search counts it, so get --edges agrees
+// with neighbors --in (issue #79).
+func TestGetEdgesIncludesInboundWithoutInverse(t *testing.T) {
+	ws := newWS(t, "build-hub")
+	cmp, err := Create(ws, "component", CreateOpts{
+		Fields: fields("title", "Search", "kind", "service"), UseTemplate: true})
+	requireNoError(t, err)
+	uc, err := Create(ws, "use-case", CreateOpts{
+		Fields: fields("title", "Find a document", "trigger", "human", "served_by", cmp.Slug), UseTemplate: true})
+	requireNoError(t, err)
+	req, err := Create(ws, "requirement", CreateOpts{
+		Fields: fields("title", "Search answers fast", "kind", "non-functional", "realized_in", cmp.Slug), UseTemplate: true})
+	requireNoError(t, err)
+
+	view, err := Get(ws, cmp.Slug, true)
+	requireNoError(t, err)
+	got := map[string]Edge{}
+	for _, e := range view.Edges {
+		got[e.Predicate] = e
+	}
+	if len(view.Edges) != 2 {
+		t.Fatalf("edges = %#v", view.Edges)
+	}
+	want := map[string]Edge{
+		"serves": {Predicate: "serves", Target: "use-case/" + uc.Slug, Derived: true,
+			ResolvedTargets: []string{"use-case/" + uc.Slug}},
+		"requirement.realized_in": {Predicate: "requirement.realized_in", Target: "requirement/" + req.Slug,
+			Derived: true, ResolvedTargets: []string{"requirement/" + req.Slug}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("edges = %#v, want %#v", got, want)
+	}
+}
+
 // EntityPath resolves each layout: folder _index, flat file, singleton file,
 // collection inventory file.
 func TestEntityPathPerLayout(t *testing.T) {

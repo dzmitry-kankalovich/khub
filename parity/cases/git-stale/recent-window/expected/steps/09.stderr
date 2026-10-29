@@ -1,5 +1,1 @@
-Usage: khub recent [OPTIONS]
-Try 'khub recent --help' for help.
-╭─ Error ──────────────────────────────────────────────────────────────────────╮
-│ Invalid value for '--limit': -1 is not in the range x>=0.                    │
-╰──────────────────────────────────────────────────────────────────────────────╯
+note: showing 3 of 4 recent entities; pass --limit 4 for all

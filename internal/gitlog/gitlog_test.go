@@ -252,7 +252,7 @@ func TestSplitLines(t *testing.T) {
 
 // --- recent ------------------------------------------------------------------
 
-func mustRecent(t testing.TB, root string, days, limit int) *RecentReport {
+func mustRecent(t testing.TB, root string, days int, limit *int) *RecentReport {
 	t.Helper()
 	report, err := Recent(root, days, limit, now)
 	if err != nil {
@@ -284,7 +284,7 @@ func TestRecentWindowNewestFirst(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := recentOrder(mustRecent(t, root, tc.days, 0)); !reflect.DeepEqual(got, tc.want) {
+			if got := recentOrder(mustRecent(t, root, tc.days, nil)); !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("got %v, want %v", got, tc.want)
 			}
 		})
@@ -299,7 +299,7 @@ func TestRecentTieBreakAndLimit(t *testing.T) {
 		seed(t, root, "fragments/"+slug+".md",
 			kv{"type", "fragment"}, kv{"stage", "raw"}, kv{"updated", "2026-06-27"}, kv{"title", "T " + slug})
 	}
-	report := mustRecent(t, root, 7, 2)
+	report := mustRecent(t, root, 7, ptr(2))
 	if got, want := recentOrder(report), []string{"a-note", "b-note"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -309,6 +309,27 @@ func TestRecentTieBreakAndLimit(t *testing.T) {
 	if report.Entries[0].Title != "T a-note" || report.Entries[0].Age != 0 {
 		t.Errorf("entry = %+v", report.Entries[0])
 	}
+	// --limit means what it means to query: 0 keeps nothing, -n drops the last n.
+	if got := recentOrder(mustRecent(t, root, 7, ptr(0))); len(got) != 0 {
+		t.Errorf("limit 0 = %v, want none", got)
+	}
+	if got, want := recentOrder(mustRecent(t, root, 7, ptr(-1))), []string{"a-note", "b-note"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("limit -1 = %v, want %v", got, want)
+	}
+}
+
+// A date after now has a negative age and sorts first; draft rides along.
+func TestRecentFutureDateSortsFirst(t *testing.T) {
+	root := freshWS(t)
+	seed(t, root, "fragments/today.md", kv{"type", "fragment"}, kv{"stage", "raw"}, kv{"updated", "2026-06-27"})
+	seed(t, root, "fragments/later.md", kv{"type", "fragment"}, kv{"stage", "raw"}, kv{"updated", "2026-07-01"}, kv{"draft", true})
+	report := mustRecent(t, root, 7, nil)
+	if got, want := recentOrder(report), []string{"later", "today"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if e := report.Entries[0]; e.Age != -4 || !e.Draft {
+		t.Errorf("entry = %+v, want age -4 and draft", e)
+	}
 }
 
 // An undated entity takes its file's last commit date, as stale reads it.
@@ -317,7 +338,7 @@ func TestRecentBackfillsGitDate(t *testing.T) {
 	seed(t, root, "fragments/undated.md", kv{"type", "fragment"}, kv{"stage", "raw"})
 	gitInit(t, root)
 	commit(t, root, "seed", "2026-06-25T12:00:00")
-	report := mustRecent(t, root, 7, 0)
+	report := mustRecent(t, root, 7, nil)
 	if !report.GitAvailable {
 		t.Error("git_available = false in a repo with history")
 	}

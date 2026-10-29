@@ -382,7 +382,7 @@ List entities touched within the window, newest first: khub recent [--days N].
 
 Options:
   --days <int>  Window in days; an entity at most N days old is recent. [default: 7]
-  --limit <int>  Cap the returned set; 0 returns all.
+  --limit <int>  Cap the returned set.
   --format <str>  text (Rich table on a TTY) or json. [default: text]
   --help  Show this message and exit.
 

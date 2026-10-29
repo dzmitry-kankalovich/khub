@@ -14,6 +14,7 @@ import (
 	"github.com/endgame-build/khub/internal/project"
 	"github.com/endgame-build/khub/internal/query"
 	"github.com/endgame-build/khub/internal/schema"
+	"github.com/endgame-build/khub/internal/values"
 	"github.com/endgame-build/khub/internal/workspace"
 )
 
@@ -23,6 +24,7 @@ type Entry struct {
 	Type          string
 	Slug          string
 	Title         string // the title every read record carries (query.Title)
+	Draft         bool
 	EffectiveDate time.Time
 	Age           int    // days since the effective date; drives both sorts
 	Source        string // "updated" | "git log" | "created"
@@ -146,11 +148,17 @@ func (s *scope) judge(now time.Time) ([]Entry, error) {
 			continue
 		}
 		entries = append(entries, Entry{
-			Type: node.Type, Slug: node.Slug, Title: query.Title(meta, node.Slug),
+			Type: node.Type, Slug: node.Slug, Title: query.Title(meta, node.Slug), Draft: draft(meta),
 			EffectiveDate: *eff, Age: daysBetween(*eff, now), Source: source,
 		})
 	}
 	return entries, nil
+}
+
+// draft is the publish flag as query reads it.
+func draft(meta *omap.Map) bool {
+	v, _ := meta.Get("draft")
+	return values.AsBool(v)
 }
 
 // absent is `meta.get(key) is None`: a missing key and an explicit null read

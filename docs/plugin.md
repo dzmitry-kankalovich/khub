@@ -59,6 +59,8 @@ row in place of Claude Code's raw drawing.
   `orphan`, `stale`). A `neighbors` line holds the id, the direction and the
   predicate. A `check` line holds the bucket and the id or path. A `validate`
   line holds the id, the field and the reason.
+- The result line of a `search` or a `recent` carries khub's `note:` when it
+  printed one, such as rows `--limit` dropped.
 - The `json` button returns that compact row to Claude Code's raw drawing.
 - A command made only of khub calls joined by `;` or `&&` draws one compact row
   per call, with the time and the `json` button on the first. A leading

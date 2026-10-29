@@ -142,9 +142,15 @@ function resultOf(call: Simple, json: unknown, note: string): Result {
     }
 
     case 'query':
-    case 'recent':
     case 'stale':
       return entities
+
+    case 'recent': {
+      // khub's note says when --limit cut the list.
+      const noted = firstLine(note).replace(/^note: /, '').slice(0, 80)
+
+      return noted === '' ? entities : { line: `${entities.line} · ${noted}`, tone: 'warn' }
+    }
 
     case 'search':
       return searchResult(rows, note)

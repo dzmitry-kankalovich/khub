@@ -14,8 +14,10 @@ steps:
 - argv: ["recent", "--days", "30", "--format", "json"]
 # --limit cuts after the sort and says on stderr what it dropped.
 - argv: ["recent", "--days", "30", "--limit", "2"]
-# --days 0 is today alone; --limit 0 is no cap.
-- argv: ["recent", "--days", "0", "--limit", "0"]
-# A negative window or limit is a usage error.
+# --days 0 is today alone.
+- argv: ["recent", "--days", "0"]
+# --limit is query's: 0 keeps nothing, -1 drops the last row; the note says so.
+- argv: ["recent", "--limit", "0"]
+- argv: ["recent", "--days", "30", "--limit", "-1"]
+# A negative window is a usage error.
 - argv: ["recent", "--days", "-1"]
-- argv: ["recent", "--limit", "-1"]

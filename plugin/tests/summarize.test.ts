@@ -109,7 +109,12 @@ test('query, recent and stale count entities', () => {
   expect(say('khub query --type component --format json', F.query_components).line).toBe('2 entities')
   expect(say('khub query --draft --format json', F.query_draft).line).toBe('no entities')
   expect(sayOf('khub stale --days 30', [{ id: 'x/a' }])).toEqual({ head: 'khub stale', line: '1 entity', tone: 'plain' })
-  expect(say('khub recent --limit 2 --format json', F.recent_limited).line).toBe('2 entities')
+  expect(say('khub recent --limit 2 --format json', F.recent_limited)).toEqual({
+    head: 'khub recent',
+    line: '2 entities · showing 2 of 8 recent entities; pass --limit 8 for all',
+    tone: 'warn',
+  })
+  expect(sayOf('khub recent', [{ id: 'x/a' }])).toEqual({ head: 'khub recent', line: '1 entity', tone: 'plain' })
 })
 
 test('search shows the top hit, and warns with khub\'s note', () => {
@@ -211,6 +216,9 @@ test('a query, a search, a recent and a stale list show id, title and flags', ()
   expect(list('khub recent --limit 2 --format json', F.recent_limited).rows).toEqual([
     { text: 'actor/act-analyst', note: 'Analyst', flags: [] },
     { text: 'arc42/arc42', note: 'Architecture', flags: [] },
+  ])
+  expect(listOf('khub recent', [{ id: 'x/a', title: 'A', draft: true }]).rows).toEqual([
+    { text: 'x/a', note: 'A', flags: ['draft'] },
   ])
   expect(listOf('khub stale', [{ id: 'x/a', title: 'A', draft: true, orphan: true, stale: true }]).rows).toEqual([
     { text: 'x/a', note: 'A', flags: ['draft', 'orphan', 'stale'] },

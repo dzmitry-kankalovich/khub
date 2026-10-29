@@ -1,5 +1,1 @@
-Usage: khub recent [OPTIONS]
-Try 'khub recent --help' for help.
-╭─ Error ──────────────────────────────────────────────────────────────────────╮
-│ Invalid value for '--days': -1 is not in the range x>=0.                     │
-╰──────────────────────────────────────────────────────────────────────────────╯
+note: showing 0 of 3 recent entities; pass --limit 3 for all

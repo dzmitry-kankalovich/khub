@@ -47,7 +47,7 @@ func registerStale(root *cobra.Command) {
 				}
 				return Emit(records, format, func() {
 					if !report.GitAvailable {
-						fmt.Println("No git history; using updated field only")
+						fmt.Println(noGitNotice)
 					}
 					if len(rows) == 0 {
 						fmt.Println("No stale entities")
@@ -63,6 +63,10 @@ func registerStale(root *cobra.Command) {
 	root.AddCommand(cmd)
 }
 
+// noGitNotice is the human view's line when the workspace has no git history:
+// an undated entity then falls back to `created`, not to a commit date.
+const noGitNotice = "No git history; dates come from updated or created only"
+
 // recentDays is `recent`'s default window: a week.
 const recentDays = 7
 
@@ -71,20 +75,15 @@ func registerRecent(root *cobra.Command) {
 	var days, limit int
 	cmd := newCmd("recent", "List entities touched within the window, newest first: khub recent [--days N].",
 		"", func(cmd *cobra.Command, args []string) error {
-			for _, f := range []struct {
-				name  string
-				value int
-			}{{"days", days}, {"limit", limit}} {
-				if f.value < 0 {
-					return usageBox(cmd, fmt.Sprintf("Invalid value for '--%s': %d is not in the range x>=0.", f.name, f.value))
-				}
+			if days < 0 {
+				return usageBox(cmd, fmt.Sprintf("Invalid value for '--days': %d is not in the range x>=0.", days))
 			}
 			return Guard(format, func() error {
 				ws, err := resolveRoot()
 				if err != nil {
 					return err
 				}
-				report, err := gitlog.Recent(ws, days, limit, today())
+				report, err := gitlog.Recent(ws, days, optInt(cmd, "limit", limit), today())
 				if err != nil {
 					return err
 				}
@@ -100,6 +99,7 @@ func registerRecent(root *cobra.Command) {
 					record.Set("type", e.Type)
 					record.Set("slug", e.Slug)
 					record.Set("title", e.Title)
+					record.Set("draft", e.Draft)
 					record.Set("effective_date", e.EffectiveDate.Format("2006-01-02"))
 					record.Set("age", e.Age)
 					record.Set("source", e.Source)
@@ -111,7 +111,7 @@ func registerRecent(root *cobra.Command) {
 				}
 				return Emit(records, format, func() {
 					if !report.GitAvailable {
-						fmt.Println("No git history; using updated field only")
+						fmt.Println(noGitNotice)
 					}
 					if len(rows) == 0 {
 						fmt.Println("No recent entities")
@@ -123,7 +123,7 @@ func registerRecent(root *cobra.Command) {
 		})
 	cmd.Args = clickArity(0)
 	cmd.Flags().IntVar(&days, "days", recentDays, "Window in days; an entity at most N days old is recent.")
-	cmd.Flags().IntVar(&limit, "limit", 0, "Cap the returned set; 0 returns all.")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Cap the returned set.")
 	cmd.Flags().StringVar(&format, "format", "text", "text (Rich table on a TTY) or json.")
 	root.AddCommand(cmd)
 }

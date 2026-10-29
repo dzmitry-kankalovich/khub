@@ -6,6 +6,8 @@ package gitlog
 import (
 	"sort"
 	"time"
+
+	"github.com/endgame-build/khub/internal/query"
 )
 
 // RecentReport is the recent set, the total before --limit cut it, and
@@ -17,10 +19,11 @@ type RecentReport struct {
 }
 
 // Recent lists entities whose effective date is at most `days` old, newest
-// first; ties break on (type, slug) ascending. limit caps the list when
-// positive. now is a civil date at UTC midnight, as for Stale. A date after
-// now (a negative age) counts as recent.
-func Recent(root string, days, limit int, now time.Time) (*RecentReport, error) {
+// first; ties break on (type, slug) ascending. limit is query's --limit: nil
+// is no cap, otherwise query.Limit's slice (0 keeps nothing, -n drops the
+// last n). now is a civil date at UTC midnight, as for Stale. A date after
+// now (a negative age) counts as recent and sorts first.
+func Recent(root string, days int, limit *int, now time.Time) (*RecentReport, error) {
 	s, err := scan(root)
 	if err != nil {
 		return nil, err
@@ -39,8 +42,8 @@ func Recent(root string, days, limit int, now time.Time) (*RecentReport, error) 
 	// as the tiebreak.
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Age < entries[j].Age })
 	total := len(entries)
-	if limit > 0 && limit < total {
-		entries = entries[:limit]
+	if limit != nil {
+		entries = query.Limit(entries, *limit)
 	}
 	return &RecentReport{Entries: entries, Total: total, GitAvailable: s.gitOK}, nil
 }

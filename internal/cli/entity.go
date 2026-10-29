@@ -98,7 +98,7 @@ func registerAdd(root *cobra.Command) {
 
 func registerGet(root *cobra.Command) {
 	var format string
-	var edges bool
+	var edges, byPath bool
 	cmd := newCmd("get [ID]...", "Read entities' frontmatter and body, optionally with derived edges.",
 		"[ID]...", func(cmd *cobra.Command, args []string) error {
 			return Guard(format, func() error {
@@ -113,7 +113,11 @@ func registerGet(root *cobra.Command) {
 				if len(args) > 1 && format == "raw" {
 					return errs.New("batch_raw", "Raw output requires exactly one ID")
 				}
-				views, err := entity.GetMany(ws, args, edges)
+				get := entity.GetMany
+				if byPath {
+					get = entity.GetManyByPath
+				}
+				views, err := get(ws, args, edges)
 				if err != nil {
 					return err
 				}
@@ -137,6 +141,7 @@ func registerGet(root *cobra.Command) {
 			})
 		})
 	cmd.Flags().BoolVar(&edges, "edges", false, "Include stored and derived edges.")
+	cmd.Flags().BoolVar(&byPath, "path", false, "Read each ID as a file path, workspace-relative or absolute, and get the entity stored there.")
 	cmd.Flags().StringVar(&format, "format", "text", "json, table, raw, or text (Rich on a TTY).")
 	root.AddCommand(cmd)
 }

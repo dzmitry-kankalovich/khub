@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/endgame-build/khub/internal/canon"
 	"github.com/endgame-build/khub/internal/entity"
 	"github.com/endgame-build/khub/internal/fsio"
 	"github.com/endgame-build/khub/internal/graph"
@@ -38,7 +39,7 @@ const OKFVersion = "0.1"
 const IndexName = "index.md"
 
 // Result is reindex.ReindexResult: the derived index, how many entities, and
-// whether it was written. Diff is populated only under dry-run.
+// whether it was written. Diff is populated only under dry-run and check.
 type Result struct {
 	Count   int
 	Path    string
@@ -52,6 +53,10 @@ type Result struct {
 	// Missing is set when no index.md exists to diff against (dry run and
 	// check only).
 	Missing bool
+	// Stale is set when index.md, read with universal newlines, differs from
+	// Content byte for byte (dry run and check only). It is the verdict; Diff
+	// is for display, and its line split cannot see every byte difference.
+	Stale bool
 }
 
 // Reindex is reindex.reindex: regenerate index.md from the live graph;
@@ -74,10 +79,11 @@ func reindex(root string, dryRun bool) (*Result, error) {
 	}
 	path := filepath.Join(root, IndexName)
 	if dryRun {
-		diff, missing := diffAgainstCurrent(root, path, content)
+		// A preview stays lenient: an unreadable index.md diffs as empty.
+		cur, _ := readCurrent(root, path, content)
 		return &Result{
-			Count: count, Path: path, Content: content, Diff: diff,
-			Wrote: false, Malformed: malformed, Missing: missing,
+			Count: count, Path: path, Content: content, Diff: cur.diff,
+			Wrote: false, Malformed: malformed, Missing: cur.missing, Stale: cur.stale,
 		}, nil
 	}
 	if err := fsio.AtomicWriteIn(root, path, []byte(content)); err != nil {
@@ -89,32 +95,69 @@ func reindex(root string, dryRun bool) (*Result, error) {
 // Check is `khub reindex --check`: the dry-run diff, as a gate. It writes
 // nothing and takes no lock. Unlike a dry run it refuses an incomplete scan,
 // exactly as a real reindex does: a verdict of "current" or "stale" over a
-// graph missing whole files would be wrong either way. An empty Diff means
-// index.md matches what reindex would write.
+// graph missing whole files would be wrong either way. For the same reason it
+// refuses an index.md it cannot read (a symlink, a directory, no permission)
+// rather than call it stale: the `khub reindex` a stale verdict names would
+// refuse it too. Result.Stale is the verdict.
 func Check(root string) (*Result, error) {
 	content, count, _, err := buildIndexDoc(root, false)
 	if err != nil {
 		return nil, err
 	}
 	path := filepath.Join(root, IndexName)
-	diff, missing := diffAgainstCurrent(root, path, content)
+	cur, err := readCurrent(root, path, content)
+	if err != nil {
+		return nil, err
+	}
 	return &Result{
-		Count: count, Path: path, Content: content, Diff: diff, Missing: missing,
+		Count: count, Path: path, Content: content, Diff: cur.diff,
+		Missing: cur.missing, Stale: cur.stale,
 	}, nil
 }
 
-// diffAgainstCurrent diffs the derived index against the file on disk. An
-// unreadable or absent file diffs as empty, so its diff is the whole index;
-// the bool reports an absent one.
-func diffAgainstCurrent(root, path, content string) (string, bool) {
-	current := ""
-	raw, rerr := fsio.ReadFile(root, path)
-	if rerr == nil {
-		current = string(raw)
+// current is index.md on disk measured against the derived index.
+type current struct {
+	diff    string
+	missing bool
+	stale   bool
+}
+
+// readCurrent compares the derived index with the file on disk, read with
+// universal newlines as every khub text read is, so a CRLF checkout (git's
+// core.autocrlf) of a current index is current. An absent file compares as
+// empty and is reported missing. Any other read error is returned alongside a
+// comparison against empty, which a dry run may use and a check must not.
+func readCurrent(root, path, content string) (current, error) {
+	text, err := readIndex(root, path)
+	missing := errors.Is(err, fs.ErrNotExist)
+	if err != nil {
+		text = ""
 	}
-	diff := unifiedDiff(
-		splitLinesKeepEnds(current), splitLinesKeepEnds(content), IndexName, IndexName)
-	return diff, errors.Is(rerr, fs.ErrNotExist)
+	cur := current{
+		diff: unifiedDiff(
+			splitLinesKeepEnds(text), splitLinesKeepEnds(content), IndexName, IndexName),
+		missing: missing,
+		stale:   missing || text != content,
+	}
+	if err != nil && !missing {
+		return cur, err
+	}
+	return cur, nil
+}
+
+// readIndex reads index.md with universal newlines. Something other than a
+// regular file there is refused as the write in a real reindex refuses it, so
+// a check never reports a state the corrective reindex cannot fix. (Reading a
+// directory would otherwise surface as a path khub built wrong.)
+func readIndex(root, path string) (string, error) {
+	info, err := fsio.Stat(root, path)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", &fs.PathError{Op: "read", Path: path, Err: fs.ErrInvalid}
+	}
+	return canon.ReadTextIn(root, path)
 }
 
 // BuildIndexDoc is reindex.build_index_doc: the rendered OKF index.md and its

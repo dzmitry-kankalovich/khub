@@ -10,3 +10,7 @@ steps:
 - argv: ["reindex", "--check"]
 - sh: "printf -- \"---\\nbroken: [\\n---\\n\" > knowledge/requirements/bad.md"
 - argv: ["reindex", "--check"]
+- sh: "rm knowledge/requirements/bad.md"
+- argv: ["reindex"]
+- sh: "perl -pi -e 's/\\n/\\r\\n/' index.md"
+- argv: ["reindex", "--check"]

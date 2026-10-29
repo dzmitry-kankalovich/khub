@@ -25,7 +25,7 @@ func registerReindex(root *cobra.Command) {
 	cmd := newCmd("reindex", "Regenerate the OKF index.md from the graph: khub reindex [--dry-run | --check].",
 		"", func(cmd *cobra.Command, args []string) error {
 			if dryRun && check {
-				return usageBox(cmd, "Options --dry-run and --check cannot be used together.")
+				return usageBox(cmd, "Invalid value: Pass --dry-run or --check, not both")
 			}
 			return Guard("text", func() error {
 				ws, err := resolveRoot()
@@ -57,9 +57,9 @@ func registerReindex(root *cobra.Command) {
 								"will refuse until they parse. Run `khub check` for the list.\n",
 							len(result.Malformed), strings.Join(shown, ", "), more)
 					}
-					// An empty diff means the index already matches; say so rather
-					// than print nothing.
-					if result.Diff != "" {
+					// A current index prints nothing to diff; say so rather than
+					// print nothing.
+					if result.Stale {
 						_, werr := fmt.Fprint(os.Stdout, result.Diff)
 						return werr
 					}
@@ -83,25 +83,28 @@ func registerReindex(root *cobra.Command) {
 }
 
 // reindexCheck is the --check gate: the dry-run diff, and exit 1 (a gate
-// failed — the workspace is wrong, not the call) when there is one. The
-// corrective call goes to stderr so stdout stays the diff alone.
+// failed — the workspace is wrong, not the call) when index.md is stale or
+// missing. The corrective call goes to stderr so stdout stays the diff alone,
+// and it goes first, so a reader that closes the pipe early (`| head`) still
+// leaves it on stderr.
 func reindexCheck(ws string) error {
 	result, err := reindex.Check(ws)
 	if err != nil {
 		return err
 	}
-	if result.Diff == "" {
+	if !result.Stale {
 		fmt.Println("index.md is up to date")
 		return nil
-	}
-	if _, werr := fmt.Fprint(os.Stdout, result.Diff); werr != nil {
-		return werr
 	}
 	state := "stale"
 	if result.Missing {
 		state = "missing"
 	}
 	fmt.Fprintf(os.Stderr, "index.md is %s. Run `khub reindex` to regenerate it.\n", state)
+	// A closed pipe does not change the verdict: the gate still failed.
+	if _, werr := fmt.Fprint(os.Stdout, result.Diff); werr != nil && !isEPIPE(werr) {
+		return werr
+	}
 	return &ExitError{Code: 1}
 }
 

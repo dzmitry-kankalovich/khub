@@ -165,7 +165,8 @@ storage:
 	}
 }
 
-// Policy `locked` and `locked_relations` resolve onto the type; a
+// Policy `locked` and `locked_relations` resolve onto the type, a repeated
+// predicate once; a
 // locked_relations name the type does not declare itself — a base edge
 // included — is a schema_error, never a silently inert lock.
 func TestPolicyLocksResolve(t *testing.T) {
@@ -176,7 +177,7 @@ ontology:
       relations:
         cites: { to: note, many: true }
 `
-	schema := resolveWithCore(t, ontology, "policy:\n  note: { locked: true, locked_relations: [cites] }\n")
+	schema := resolveWithCore(t, ontology, "policy:\n  note: { locked: true, locked_relations: [cites, cites] }\n")
 	note := typeOf(t, schema, "note")
 	if !note.Locked || !eqStrings(note.LockedRelations, []string{"cites"}) {
 		t.Fatalf("locked = %v, relations = %v", note.Locked, note.LockedRelations)

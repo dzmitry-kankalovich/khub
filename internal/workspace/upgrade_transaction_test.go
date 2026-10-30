@@ -339,7 +339,7 @@ func TestUpgradeRefusesRemovingLockedElements(t *testing.T) {
 	}
 	partial := located(t, func() error { _, err := Upgrade(root, UpgradeOptions{Unlock: []string{"memo"}}); return err }())
 	if partial.Code != "locked_removed" || !strings.Contains(partial.Message, "elements: memo.cites.") ||
-		!strings.Contains(partial.Message, "pass --unlock memo.cites ") {
+		!strings.Contains(partial.Message, "rerun it with --unlock memo --unlock memo.cites to") {
 		t.Fatalf("type unlock alone: %v", partial)
 	}
 	after, _ := os.ReadFile(filepath.Join(root, ".khub", "ontology.yaml"))
@@ -361,5 +361,43 @@ func TestUpgradePassesLockedElementsItKeeps(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "ws")
 	mustInit(t, "note", root, InitOptions{PresetSource: src})
 	writeFile(t, filepath.Join(src, "note", "policy.yaml"), "policy: {}\n")
+	mustUpgrade(t, root, UpgradeOptions{})
+}
+
+// A current schema that does not resolve keeps its locks: the reviewer's
+// repro locks a base edge (`related`), which makes the schema a schema_error,
+// and the locks are read from the raw layer files instead of switching off.
+func TestUpgradeHoldsLocksOfAnUnloadableSchema(t *testing.T) {
+	src := presetSource(t)
+	writeFile(t, filepath.Join(src, "note", "ontology.yaml"), "version: '10.0.0'\nontology:\n  entities:\n    note:\n      relations:\n        cites: {to: note}\n    memo:\n      relations:\n        refs: {to: note}\n")
+	writeFile(t, filepath.Join(src, "note", "storage.yaml"), "storage:\n  note: {layout: file, path: notes}\n  memo: {layout: file, path: memos}\n")
+	root := filepath.Join(t.TempDir(), "ws")
+	mustInit(t, "note", root, InitOptions{PresetSource: src})
+	writeFile(t, filepath.Join(root, ".khub", "policy.yaml"),
+		"policy:\n  note: {locked: true, locked_relations: [cites, related]}\n  memo: {locked: true, locked_relations: [refs, refs]}\n")
+	writeFile(t, filepath.Join(src, "note", "ontology.yaml"), notePresetOntology)
+	writeFile(t, filepath.Join(src, "note", "storage.yaml"), notePresetStorage)
+	refused := located(t, func() error { _, err := Upgrade(root, UpgradeOptions{DryRun: true}); return err }())
+	if refused.Code != "locked_removed" || !strings.Contains(refused.Message, "elements: note.cites, memo, memo.refs.") {
+		t.Fatalf("unloadable schema: %v", refused)
+	}
+	result := mustUpgrade(t, root, UpgradeOptions{Unlock: []string{"note.cites", "memo", "memo.refs"}})
+	if len(result.RemovedTypes) != 0 { // the current schema did not load, so nothing to compare
+		t.Fatalf("removed = %v", result.RemovedTypes)
+	}
+}
+
+// A layer file that does not parse and mentions a lock refuses: what it locks
+// cannot be known. One that mentions none is replaced, as before.
+func TestUpgradeRefusesUnreadableLocks(t *testing.T) {
+	src := presetSource(t)
+	root := filepath.Join(t.TempDir(), "ws")
+	mustInit(t, "note", root, InitOptions{PresetSource: src})
+	writeFile(t, filepath.Join(root, ".khub", "policy.yaml"), "policy: {note: {locked: true}\n")
+	refused := located(t, func() error { _, err := Upgrade(root, UpgradeOptions{}); return err }())
+	if refused.Code != "locks_unreadable" || refused.Target != ".khub/policy.yaml" {
+		t.Fatalf("err = %v", refused)
+	}
+	writeFile(t, filepath.Join(root, ".khub", "policy.yaml"), "policy: {note: {orphan: true}\n")
 	mustUpgrade(t, root, UpgradeOptions{})
 }

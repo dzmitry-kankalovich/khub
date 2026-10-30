@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -507,7 +508,11 @@ func applyPolicyDecl(m *omap.Map, td *TypeDecl, loc []string, c *vocabCollector)
 	td.PathRefs = takeBool(m, "path_refs", loc, c)
 	td.Locked = takeBool(m, "locked", loc, c)
 	if lv, has := m.Get("locked_relations"); has && lv != nil {
-		td.LockedRelations = takeStrList(lv, at(loc, "locked_relations"), c)
+		for _, rn := range takeStrList(lv, at(loc, "locked_relations"), c) {
+			if !slices.Contains(td.LockedRelations, rn) {
+				td.LockedRelations = append(td.LockedRelations, rn)
+			}
+		}
 	}
 	addExtras(m, loc, c, "required", "orphan", "path_refs", "locked", "locked_relations")
 }

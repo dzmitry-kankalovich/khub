@@ -183,8 +183,9 @@ error_codes:
 - inbound_edge_refusal
 - invalid_schema
 - invalid_snapshot
-- locked_removed
 - invalid_slug
+- locked_removed
+- locks_unreadable
 - lookup_error
 - malformed_entity
 - malformed_projection

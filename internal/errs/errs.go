@@ -133,19 +133,35 @@ func NoWorkspace() *Located {
 }
 
 // LockedRemoved is `locked_removed`: an upgrade whose new schema drops a type
-// or predicate the current schema locks. names are the elements still locked
-// after --unlock, `type` or `type.predicate`; the message spells the flags
-// that let the removal through.
-func LockedRemoved(names []string) *Located {
-	flags := make([]string, len(names))
-	for i, n := range names {
+// or predicate the current schema locks. blocked are the elements still locked
+// after --unlock, `type` or `type.predicate`; all is every locked element the
+// upgrade removes, so the flags the message spells are the whole run's, not
+// only the ones still missing.
+func LockedRemoved(blocked, all []string) *Located {
+	flags := make([]string, len(all))
+	for i, n := range all {
 		flags[i] = "--unlock " + n
 	}
 	return &Located{
 		Code: "locked_removed",
-		Message: fmt.Sprintf("Upgrade would remove locked schema elements: %s. Nothing was written; "+
-			"pass %s to remove them anyway", strings.Join(names, ", "), strings.Join(flags, " ")),
-		Target: names[0],
+		Message: fmt.Sprintf("Upgrade would remove locked schema elements: %s. The upgrade was not applied; "+
+			"rerun it with %s to allow the removal", strings.Join(blocked, ", "), strings.Join(flags, " ")),
+		Target: blocked[0],
+	}
+}
+
+// LocksUnreadable is `locks_unreadable`: the current schema does not parse
+// and the file that failed mentions a lock, so upgrade cannot tell what the
+// new schema would remove. Replacing the file would drop exactly what the
+// lock protects, so the call is refused until the file parses. cause is the
+// parse error, which already names the file.
+func LocksUnreadable(path, cause string) *Located {
+	path = filepath.ToSlash(path) // printed: khub shows every path with '/'
+	return &Located{
+		Code: "locks_unreadable",
+		Message: fmt.Sprintf("Cannot read the schema locks in %s, so the upgrade was not applied; "+
+			"fix the file so upgrade can tell which locked elements it would remove. %s", path, cause),
+		Target: path,
 	}
 }
 

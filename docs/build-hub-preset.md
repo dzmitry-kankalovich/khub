@@ -1,8 +1,21 @@
 # build-hub preset
 
-**One preset for a build project: eleven types that say what the product is, who uses it and what they do, what must hold, why, what exists, who owns it, and what talks to what.** Nothing in flight. A documented ladder for the types that come back only when a question needs them.
+**One preset for a build project: types that say what the product is, who uses it and what they do, what must hold, why, what exists, who owns it, and what talks to what.** Nothing in flight. A documented ladder for the types that come back only when a question needs them.
 
-This describes preset version **0.6.0**, which ships: the merge of the old `build-hub` (seventeen types) and `build-lite` (six). The preset is the source of truth for its schema; this page is the reading copy. Six of the eleven, `prd`, `arc42`, `requirement`, `adr`, `component` and `repo`, are what `build-lite` 0.3.0 shipped and kb 0.14.0 still ships; the other five are new in 0.6.0.
+The preset is the merge, made in 0.6.0, of the old `build-hub` (seventeen types) and `build-lite` (six). Six of its types, `prd`, `arc42`, `requirement`, `adr`, `component` and `repo`, are what `build-lite` 0.3.0 shipped and kb 0.14.0 still ships; the other five are new in 0.6.0.
+
+The preset is the source of truth for its schema. The tables between `GENERATED` markers on this page are generated from `khub schema --format json` against a workspace seeded from it; regenerate them with `go run ./parity/tools/presetdocs -bin ./khub`, and CI fails when they drift from `presets/build-hub/`. The prose around them is written by hand.
+
+<!-- BEGIN GENERATED summary -->
+
+Preset version **0.6.0**. 11 entity types, and 16 relation predicates: 12 declared by the preset and 4 from the base block. Computed inverses, never stored: `superseded`, `serves`, `consumed_by`.
+
+Every type also carries the base block, which is embedded in the binary (`khub schema base` prints it):
+
+- **Base attributes**: `type`, `draft`, `author`, `created`, `updated`, `title`, `description`, `resource`, `tags`, `aliases`.
+- **Base edges**: `related` → any (many); `sources` → any (many); `references` → any (many); `depends_on` → any (many, acyclic).
+
+<!-- END GENERATED summary -->
 
 ```bash
 khub init build-hub ./my-hub
@@ -51,9 +64,9 @@ index.md                  # the whole corpus in one file — written by init, re
 
 **Slugs are lowercase.** `add --id` slugifies whatever you pass and id resolution is case-sensitive. Minting reads no siblings, so two branches minting the same title collide on one filename instead of numbering past each other. The scheme is in [`schema.md`](schema.md).
 
-## The eleven types
+## The types
 
-Every md type ships a body template; headings a type gained after it first shipped are `optional: true`. Each type also carries the base block (`title`, `description`, `resource`, `tags`, `draft`, `author`, `created`, `updated`; edges `related`, `sources`, `references`, `depends_on`).
+Every md type ships a body template; headings a type gained after it first shipped are `optional: true`. Each type also carries the base block listed above; [Type reference](#type-reference) has every type's fields and relations.
 
 - **prd** (`knowledge/prd.md`, singleton, `required: true`) — the product source of truth. Template: Document Purpose*, Vision, Target Users, Glossary, Features, Non-Goals, Deferred*, Success Metrics, Roadmap*, Alternatives & Recommendation*, Open Questions*, Assumptions Index*, Grounding Evidence*. Lenses: `scope`, `journeys`, `metrics`, `assumptions`. Absorbs the old hub's roadmap and glossary as sections.
 - **arc42** (`knowledge/arc42.md`, singleton) — arc42's twelve sections under docs.arc42.org's names; the domain data model lives under Crosscutting Concepts as an ERD. Lenses: `direction`, `deferred`.
@@ -71,23 +84,32 @@ Every md type ships a body template; headings a type gained after it first shipp
 
 Every stored edge points *up* the durability ladder and lives on the entity being born; the inverse of each is computed at read time and never written. The field name is the predicate; the verb is how to read it.
 
-| Predicate | From → to | Reads as | Required | Inverse |
-|---|---|---|---|---|
-| `actor` | use-case → actor | performed by | no (the `actor` lens asks for it when `trigger: human`) | computed |
-| `capability` | use-case → capability | belongs to | no | computed |
-| `served_by` | use-case → component (many) | served by | no | `serves`: what a component serves |
-| `capabilities` | requirement → capability (many) | placed in | no | computed |
-| `use_cases` | requirement → use-case (many) | governs | no | computed |
-| `realized_in` | requirement → component (many) | realized in | no | computed |
-| `supersedes` | adr → adr | supersedes | no; acyclic | `superseded` |
-| `affects` | adr → any (many) | affects | no | computed |
-| `system` | component → system | part of | no | computed: a system's components |
-| `repo` | component → repo | lives in | no | computed |
-| `consumes` | component → api (many) | consumes | no | `consumed_by` |
-| `provider` | api → component | provided by | yes | computed: an owner's APIs |
-| `depends_on` | any → any (many) | depends on | no; acyclic | computed |
+<!-- BEGIN GENERATED relations -->
 
-Twelve predicates beyond the universal four, twelve declarations. `served_by` is ArchiMate's Serving relation read from the served side; `touches`, the blueprint's word for a step, was rejected because it names an event, not a relationship.
+| Predicate | From | To | Many | Required | Acyclic | Inverse |
+|---|---|---|---|---|---|---|
+| `actor` | use-case | actor | no | no | no |  |
+| `capability` | use-case | capability | no | no | no |  |
+| `served_by` | use-case | component | yes | no | no | `serves` |
+| `capabilities` | requirement | capability | yes | no | no |  |
+| `use_cases` | requirement | use-case | yes | no | no |  |
+| `realized_in` | requirement | component | yes | no | no |  |
+| `supersedes` | adr | adr | no | no | yes | `superseded` |
+| `affects` | adr | any | yes | no | no |  |
+| `system` | component | system | no | no | no |  |
+| `repo` | component | repo | no | no | no |  |
+| `consumes` | component | api | yes | no | no | `consumed_by` |
+| `provider` | api | component | no | yes | no |  |
+| `related` | every type | any | yes | no | no |  |
+| `sources` | every type | any | yes | no | no |  |
+| `references` | every type | any | yes | no | no |  |
+| `depends_on` | every type | any | yes | no | yes |  |
+
+<!-- END GENERATED relations -->
+
+Read each predicate as a verb from the entity that stores it: a use case is *performed by* its `actor`, *belongs to* its `capability` and is *served by* its `served_by` components; a requirement is *placed in* its `capabilities`, *governs* its `use_cases` and is *realized in* its `realized_in` components; an adr *supersedes* an adr and *affects* anything; a component is *part of* its `system`, *lives in* its `repo` and *consumes* its APIs; an api is *provided by* its `provider`.
+
+`served_by` is ArchiMate's Serving relation read from the served side; `touches`, the blueprint's word for a step, was rejected because it names an event, not a relationship.
 
 ## The three walks
 
@@ -233,6 +255,160 @@ event:
 ## kb parity
 
 kb 0.14.0 ships those six types with the same ids, paths and predicates. A corpus authored by kb graduates with `khub init build-lite . --force` (the alias) and `check` is clean on it: none of the five new types has entities yet, and no new edge is required. The five additions are khub-only until kb follows; nothing in them changes a file kb wrote.
+
+## Type reference
+
+What each type adds to the base block: storage, the `when` line an agent reads to decide to record one, the attributes it declares or tightens, and its relations.
+
+<!-- BEGIN GENERATED types -->
+
+### prd
+
+Layout `singleton`, format `md`, path `knowledge/prd.md`. Required: `check` fails until one exists. Exempt from the orphan sweep.
+
+Record one when someone states what the product is for, who it serves, or what is deliberately out of scope.
+
+| Attribute | Type | Required | Values | Default |
+|---|---|---|---|---|
+| `title` (base, redeclared) | text | yes |  |  |
+
+Relations: only the base edges.
+
+### arc42
+
+Layout `singleton`, format `md`, path `knowledge/arc42.md`. Exempt from the orphan sweep.
+
+Record one when the shape of the system is described or changes — context, building blocks, data model, a crosscutting concern.
+
+| Attribute | Type | Required | Values | Default |
+|---|---|---|---|---|
+| `title` (base, redeclared) | text | yes |  |  |
+
+Relations: only the base edges.
+
+### capability
+
+Layout `file`, format `md`, path `knowledge/capabilities`, ids `cap-slug`.
+
+Record one when a coherent chunk of product value is named as a thing the product does — the map that use cases belong to and requirements are placed in.
+
+| Attribute | Type | Required | Values | Default |
+|---|---|---|---|---|
+| `title` (base, redeclared) | text | yes |  |  |
+
+Relations: only the base edges.
+
+### actor
+
+Layout `file`, format `md`, path `knowledge/actors`, ids `act-slug`.
+
+Record one when a human role is named that uses the product — a customer, an admin, an operator. Not a system or a scheduler; those are a use case's `trigger`.
+
+| Attribute | Type | Required | Values | Default |
+|---|---|---|---|---|
+| `title` (base, redeclared) | text | yes |  |  |
+
+Relations: only the base edges.
+
+### use-case
+
+Layout `file`, format `md`, path `knowledge/use-cases`, ids `uc-slug`.
+
+Record one when someone describes what a user does end to end, or a flow the system runs on a schedule or an event. Record it when the flow is described, not when it ships.
+
+| Attribute | Type | Required | Values | Default |
+|---|---|---|---|---|
+| `title` (base, redeclared) | text | yes |  |  |
+| `trigger` | text | yes | `human`, `scheduled`, `event`, `external` |  |
+
+Relations: `actor` → actor; `capability` → capability; `served_by` → component (many, inverse `serves`).
+
+### requirement
+
+Layout `file`, format `md`, path `knowledge/requirements`, ids `req-slug`.
+
+Record one when a rule is stated that the system must satisfy or must never violate. "must", "never", "always", "policy", "has to" are the tells; a stated invariant is a record, not a reply.
+
+| Attribute | Type | Required | Values | Default |
+|---|---|---|---|---|
+| `title` (base, redeclared) | text | yes |  |  |
+| `kind` | text | yes | `functional`, `non-functional`, `constraint`, `business-rule` |  |
+| `enforcement` | text | no | `ui`, `backend`, `database`, `external`, `review` |  |
+
+Relations: `capabilities` → capability (many); `use_cases` → use-case (many); `realized_in` → component (many).
+
+### adr
+
+Layout `file`, format `md`, path `knowledge/decisions`, ids `ad-YYYY-MM-DD-slug`.
+
+Record one when a choice is made, rejected, or revisited between real alternatives — product or technical, including "we considered X and are not doing it". Capture the reasoning while it is still known.
+
+| Attribute | Type | Required | Values | Default |
+|---|---|---|---|---|
+| `title` (base, redeclared) | text | yes |  |  |
+| `status` | text | yes | `proposed`, `accepted`, `rejected` |  |
+
+Relations: `supersedes` → adr (acyclic, inverse `superseded`); `affects` → any (many). Computed: `superseded` → adr (many, acyclic, inverse of `supersedes`).
+
+### system
+
+Layout `file`, format `md`, path `knowledge/systems`, ids `sys-slug`.
+
+Record one when a group of components is named as one thing with one owner and one boundary — a product, a platform, a deployable whole.
+
+| Attribute | Type | Required | Values | Default |
+|---|---|---|---|---|
+| `title` (base, redeclared) | text | yes |  |  |
+| `owner` | text | no |  |  |
+
+Relations: only the base edges.
+
+### component
+
+Layout `file`, format `md`, path `knowledge/components`, ids `cmp-slug`.
+
+Record one when a part of the system is named as a thing that can break, be owned, or be swapped — a service, a library of ours, or a vendor dependency we sit on.
+
+| Attribute | Type | Required | Values | Default |
+|---|---|---|---|---|
+| `title` (base, redeclared) | text | yes |  |  |
+| `kind` | text | yes | `service`, `library`, `external` |  |
+| `stack` | text | no |  |  |
+| `owner` | text | no |  |  |
+| `lifecycle` | text | no | `experimental`, `production`, `deprecated` |  |
+| `tier` | text | no | `tier-1`, `tier-2`, `tier-3` |  |
+
+Relations: `system` → system; `repo` → repo; `consumes` → api (many, inverse `consumed_by`). Computed: `serves` → use-case (many, inverse of `served_by`).
+
+### api
+
+Layout `file`, format `md`, path `knowledge/apis`, ids `api-slug`.
+
+Record one when an interface is agreed, published, or versioned — a REST or GraphQL surface, a gRPC service, an event stream, a data feed.
+
+| Attribute | Type | Required | Values | Default |
+|---|---|---|---|---|
+| `title` (base, redeclared) | text | yes |  |  |
+| `kind` | text | yes | `rest`, `graphql`, `grpc`, `events`, `data` |  |
+| `status` | text | yes | `proposed`, `active`, `deprecated` |  |
+
+Relations: `provider` → component (required). Computed: `consumed_by` → component (many, inverse of `consumes`).
+
+### repo
+
+Layout `file`, format `md`, path `knowledge/repos`, ids `rp-slug`.
+
+Record one when a codebase is named that holds part of this system — a service's repo, a shared library, a monorepo group.
+
+| Attribute | Type | Required | Values | Default |
+|---|---|---|---|---|
+| `title` (base, redeclared) | text | yes |  |  |
+| `repo` | text | yes | pattern `^[a-z0-9._-]+(/[a-z0-9._-]+)+$` |  |
+| `status` | text | yes | `active`, `archived` |  |
+
+Relations: only the base edges.
+
+<!-- END GENERATED types -->
 
 ## Design capture
 

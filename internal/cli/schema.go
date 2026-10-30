@@ -91,7 +91,8 @@ func registerSchema(root *cobra.Command) {
 			return Guard(jsonschemaFormat, func() error { return schemaJSONSchema(jsonschemaFormat) })
 		})
 	jsonschemaCmd.Args = clickArity(0)
-	jsonschemaCmd.Flags().StringVar(&jsonschemaFormat, "format", "text", formatHelp)
+	jsonschemaCmd.Flags().StringVar(&jsonschemaFormat, "format", "text",
+		"text (indented JSON on a TTY) or json (one line).")
 
 	schemaCmd.AddCommand(typesCmd, showCmd, edgesCmd, baseCmd, snapshotCmd, diffCmd, jsonschemaCmd)
 	root.AddCommand(schemaCmd)

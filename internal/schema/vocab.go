@@ -58,13 +58,18 @@ const TemplateNamePattern = `^[a-z][a-z0-9-]*$`
 var templateNameRE = regexp.MustCompile(TemplateNamePattern)
 
 // The authored vocabulary: every key each mapping of a layer file accepts, in
-// declaration order. The walk below rejects any other key (extra="forbid"),
-// and LayerJSONSchema builds the editor schema from these same lists, so a key
-// added here reaches both or the schema build panics.
+// declaration order. addExtras rejects any other key (extra="forbid") and is
+// the only place an extra key is reported; LayerJSONSchema builds the editor
+// schema from these same lists, so a key added here reaches both or the
+// schema build panics. TestExtraKeyChecksUseTheKeyLists holds every
+// addExtras call to one of these package-level lists.
 var (
 	// layerDocKeys are the top-level keys of a layer document. `version` is
 	// the one non-layer key (presets stamp it).
 	layerDocKeys = []string{"ontology", "policy", "storage", "version"}
+	// walkLayerKeys are the keys of the document the walk sees: Resolve
+	// re-nests the merged layers under these three alone.
+	walkLayerKeys = []string{"ontology", "policy", "storage"}
 	// authoredOntologyKeys is what an authored `ontology:` block may carry.
 	// The walk takes ontologyKeys, `base` included, but a base comes only from
 	// the embedded core document: mergeLayers rejects an authored one.
@@ -442,11 +447,7 @@ func validateSchemaFile(raw *omap.Map) (*SchemaFile, []vocabErr) {
 	sf.UnknownPolicy = applyLayer(raw, "policy", sf, c, applyPolicyDecl)
 	sf.UnknownStorage = applyLayer(raw, "storage", sf, c, applyStorageDecl)
 
-	for _, k := range raw.Keys() {
-		if k != "ontology" && k != "policy" && k != "storage" {
-			c.add("extra_forbidden", []string{k}, msgExtra)
-		}
-	}
+	addExtras(raw, nil, c, walkLayerKeys...)
 	return sf, c.list
 }
 

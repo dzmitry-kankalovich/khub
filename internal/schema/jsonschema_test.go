@@ -8,6 +8,9 @@ package schema
 import (
 	"flag"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"math"
 	"os"
 	"path/filepath"
@@ -105,21 +108,226 @@ func TestLayerJSONSchemaCoversVocabulary(t *testing.T) {
 	}
 }
 
-// TestVocabWalkUsesTheKeyLists holds every addExtras call in vocab.go to a
-// named key list, so a key cannot reach the walk without reaching the schema.
-func TestVocabWalkUsesTheKeyLists(t *testing.T) {
-	src, err := os.ReadFile("vocab.go")
+// schemaKeyLists maps each key list the JSON Schema describes to the schema
+// node holding its properties. The walk-only lists name why they are not.
+var schemaKeyLists = map[string]string{
+	"layerDocKeys":         "the root",
+	"authoredOntologyKeys": "properties.ontology",
+	"ontologyTypeKeys":     "definitions.entity",
+	"attributeKeys":        "definitions.attribute",
+	"relationKeys":         "definitions.relation",
+	"policyTypeKeys":       "definitions.policy",
+	"storageTypeKeys":      "definitions.storage",
+	"idPrefixDeclKeys":     "definitions.id_prefix_by",
+	// Walk only: the base block and the re-nested document are khub's own,
+	// never authored. ontologyKeys differs from authoredOntologyKeys by `base`.
+	"baseKeys":      "",
+	"ontologyKeys":  "",
+	"walkLayerKeys": "",
+}
+
+// TestExtraKeyChecksUseTheKeyLists reads the package's source so a key cannot
+// reach the walk without reaching the schema. In every non-test file:
+//
+//   - every addExtras call passes, as `name...`, a package-level `…Keys` var
+//     whose value is a literal []string of string literals;
+//   - no other declaration (a local, a parameter, a range variable) and no
+//     assignment reuses such a name, so the name means the package list;
+//   - "extra_forbidden" and msgExtra appear only inside addExtras (and as an
+//     operand of == or !=, which reads a kind and reports nothing), so no key
+//     check bypasses it.
+//
+// Every list addExtras is called with must be one the JSON Schema describes
+// or a walk-only list named in schemaKeyLists.
+func TestExtraKeyChecksUseTheKeyLists(t *testing.T) {
+	fset := token.NewFileSet()
+	names, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	calls := regexp.MustCompile(`(?m)^\s*addExtras\((.*)\)\s*$`).FindAllStringSubmatch(string(src), -1)
-	if len(calls) == 0 {
-		t.Fatal("found no addExtras calls in vocab.go")
+	var files []*ast.File
+	for _, n := range names {
+		if strings.HasSuffix(n, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, n, nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, f)
 	}
-	tail := regexp.MustCompile(`, [a-zA-Z]+Keys\.\.\.$`)
-	for _, c := range calls {
-		if !tail.MatchString(c[1]) {
-			t.Errorf("addExtras(%s) lists its keys inline; name them in vocab.go's key lists", c[1])
+	for _, msg := range extraKeyViolations(fset, files) {
+		t.Error(msg)
+	}
+}
+
+// extraKeyViolations is the check of TestExtraKeyChecksUseTheKeyLists over
+// parsed files, one message per violation.
+func extraKeyViolations(fset *token.FileSet, files []*ast.File) []string {
+	var out []string
+	report := func(n ast.Node, format string, args ...any) {
+		out = append(out, fset.Position(n.Pos()).String()+": "+fmt.Sprintf(format, args...))
+	}
+
+	// The package-level key lists.
+	lists := map[string]*ast.Ident{}
+	for _, f := range files {
+		for _, d := range f.Decls {
+			gd, ok := d.(*ast.GenDecl)
+			if !ok || gd.Tok != token.VAR {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				vs := spec.(*ast.ValueSpec)
+				for i, name := range vs.Names {
+					if !strings.HasSuffix(name.Name, "Keys") {
+						continue
+					}
+					if i >= len(vs.Values) || !isStringListLiteral(vs.Values[i]) {
+						report(name, "%s is not a literal []string of string literals", name.Name)
+						continue
+					}
+					lists[name.Name] = name
+				}
+			}
+		}
+	}
+
+	used := map[string]bool{}
+	for _, f := range files {
+		for _, d := range f.Decls {
+			fd, isFunc := d.(*ast.FuncDecl)
+			if !isFunc {
+				// A package-level constant spelling the kind is a way around
+				// addExtras too.
+				ast.Inspect(d, func(n ast.Node) bool {
+					if bl, ok := n.(*ast.BasicLit); ok && isExtraMarker(bl) {
+						report(bl, "an extra key kind is spelled outside addExtras")
+					}
+					return true
+				})
+				continue
+			}
+			inAddExtras := fd.Recv == nil && fd.Name.Name == "addExtras"
+			ast.Inspect(fd, func(n ast.Node) bool {
+				switch x := n.(type) {
+				case *ast.BinaryExpr:
+					// Comparing a kind reads it and reports nothing.
+					if (x.Op == token.EQL || x.Op == token.NEQ) && (isExtraMarker(x.X) || isExtraMarker(x.Y)) {
+						return false
+					}
+				case *ast.Field:
+					for _, n := range x.Names {
+						if lists[n.Name] != nil {
+							report(n, "%s shadows the package key list", n.Name)
+						}
+					}
+				case *ast.BasicLit, *ast.Ident:
+					if !inAddExtras && isExtraMarker(x.(ast.Expr)) {
+						report(x, "an extra key is reported outside addExtras")
+					}
+				case *ast.AssignStmt:
+					for _, lhs := range x.Lhs {
+						if root := rootIdent(lhs); root != nil && lists[root.Name] != nil {
+							report(root, "%s is assigned or redeclared; the key lists are fixed", root.Name)
+						}
+					}
+				case *ast.ValueSpec:
+					for _, n := range x.Names {
+						if lists[n.Name] != nil {
+							report(n, "local %s shadows the package key list", n.Name)
+						}
+					}
+				case *ast.RangeStmt:
+					for _, e := range []ast.Expr{x.Key, x.Value} {
+						if id, ok := e.(*ast.Ident); ok && lists[id.Name] != nil {
+							report(id, "range variable %s shadows the package key list", id.Name)
+						}
+					}
+				case *ast.CallExpr:
+					fn, ok := x.Fun.(*ast.Ident)
+					if !ok || fn.Name != "addExtras" {
+						return true
+					}
+					last := x.Args[len(x.Args)-1]
+					id, isIdent := last.(*ast.Ident)
+					switch {
+					case !x.Ellipsis.IsValid() || !isIdent:
+						report(x, "addExtras must take its keys as one package key list, `name...`")
+					case lists[id.Name] == nil:
+						report(x, "addExtras takes %s, which is not a package-level …Keys literal", id.Name)
+					default:
+						used[id.Name] = true
+					}
+				}
+				return true
+			})
+		}
+	}
+	for name := range used {
+		if _, known := schemaKeyLists[name]; !known {
+			out = append(out, fmt.Sprintf(
+				"addExtras checks %s, which the JSON Schema does not describe; "+
+					"add it to LayerJSONSchema and schemaKeyLists", name))
+		}
+	}
+	for name := range schemaKeyLists {
+		if !used[name] {
+			out = append(out, fmt.Sprintf("schemaKeyLists names %s, which no addExtras call checks", name))
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+func isStringListLiteral(e ast.Expr) bool {
+	cl, ok := e.(*ast.CompositeLit)
+	if !ok {
+		return false
+	}
+	at, ok := cl.Type.(*ast.ArrayType)
+	if !ok || at.Len != nil {
+		return false
+	}
+	if elt, ok := at.Elt.(*ast.Ident); !ok || elt.Name != "string" {
+		return false
+	}
+	for _, el := range cl.Elts {
+		if bl, ok := el.(*ast.BasicLit); !ok || bl.Kind != token.STRING {
+			return false
+		}
+	}
+	return true
+}
+
+// isExtraMarker is the kind literal or the message constant of an extra key.
+func isExtraMarker(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.BasicLit:
+		return x.Kind == token.STRING && x.Value == `"extra_forbidden"`
+	case *ast.Ident:
+		return x.Name == "msgExtra"
+	}
+	return false
+}
+
+// rootIdent is the variable an assignment target writes through: x in x,
+// x[i], x.f or *x.
+func rootIdent(e ast.Expr) *ast.Ident {
+	for {
+		switch x := e.(type) {
+		case *ast.Ident:
+			return x
+		case *ast.IndexExpr:
+			e = x.X
+		case *ast.SelectorExpr:
+			e = x.X
+		case *ast.StarExpr:
+			e = x.X
+		case *ast.ParenExpr:
+			e = x.X
+		default:
+			return nil
 		}
 	}
 }
@@ -161,6 +369,26 @@ func TestShippedPresetLayersPassTheJSONSchema(t *testing.T) {
 func TestJSONSchemaAgreesWithTheWalk(t *testing.T) {
 	s := committedSchema(t)
 	const ont = "ontology:\n  entities:\n    a:\n      attributes:\n        kind: { enum: [x, y] }\n    b: {}\n"
+	// An empty, comment-only, `~` or bare `---` document is null to an editor
+	// and an empty layer file to khub.
+	for _, text := range []string{"", "# notes only\n", "~\n", "---\n"} {
+		if msg := walkError(mustParseDoc(t, text)); msg != "" {
+			t.Errorf("null document %q is refused by the walk: %s", text, msg)
+		}
+	}
+	if errs := jsValidate(s, s, nil, "$"); len(errs) > 0 {
+		t.Errorf("a null document fails the JSON Schema: %s", strings.Join(errs, "; "))
+	}
+	// khub reads a document that is just `0` or `false` as empty too (ParseDoc
+	// collapses it before the walk); the schema asks for a mapping or null.
+	for _, v := range []any{int64(0), false} {
+		if msg := walkError(mustParseDoc(t, fmt.Sprintf("%v\n", v))); msg != "" {
+			t.Errorf("document %v is refused by the walk: %s", v, msg)
+		}
+		if len(jsValidate(s, s, v, "$")) == 0 {
+			t.Errorf("document %v passes the JSON Schema", v)
+		}
+	}
 	accepted := []string{
 		"",
 		"version: '1.0'\n",
@@ -367,7 +595,11 @@ func jsValidate(root, s *omap.Map, v any, at string) []string {
 				out = append(out, why...)
 			}
 		case "type":
-			if !jsIsType(v, arg.(string)) {
+			types := []any{arg}
+			if list, ok := arg.([]any); ok {
+				types = list
+			}
+			if !slices.ContainsFunc(types, func(typ any) bool { return jsIsType(v, typ.(string)) }) {
 				fail("%T is not %v", v, arg)
 			}
 		case "enum":

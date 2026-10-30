@@ -12,9 +12,10 @@ package schema
 // optional) passes here too. It is looser where a rule spans fields or files —
 // the storage matrix, a policy entry for an undeclared type, a relation to an
 // unknown type — which only khub reports when it loads the schema. One
-// deliberate exception: a layer block or `entities` that is falsy but not a
-// mapping (`policy: false`, `entities: []`) loads as empty, and the schema
-// still asks for a mapping or null there.
+// deliberate exception: a document, a layer block or `entities` that is falsy
+// but neither a mapping nor null (`policy: false`, `entities: []`, a document
+// that is just `0`) loads as empty, and the schema still asks for a mapping
+// or null there.
 
 import (
 	"fmt"
@@ -129,6 +130,11 @@ func LayerJSONSchema() *omap.Map {
 	out.Set("title", "khub layer file")
 	for _, k := range root.Keys() {
 		v, _ := root.Get(k)
+		if k == "type" {
+			// An empty, comment-only or `~` document is null to an editor,
+			// and khub reads it as an empty layer file.
+			v = []any{"object", "null"}
+		}
 		out.Set(k, v)
 	}
 	out.Set("definitions", defs)

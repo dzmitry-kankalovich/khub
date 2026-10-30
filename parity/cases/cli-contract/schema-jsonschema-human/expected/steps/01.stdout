@@ -2,7 +2,10 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "khub layer file",
   "description": "A khub layer file under .khub/. The layers merge on these top-level keys, never on the file name.",
-  "type": "object",
+  "type": [
+    "object",
+    "null"
+  ],
   "properties": {
     "ontology": {
       "description": "The domain: which types exist, their attributes and relations. The base block is embedded in khub and may not be authored here.",

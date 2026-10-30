@@ -86,6 +86,13 @@ type Hit struct {
 	Match      float64
 	TitleMatch float64
 
+	// Fused and Ranks are set only when several groups are searched at once:
+	// the reciprocal-rank-fusion score (higher is better), and the hit's
+	// 1-based rank in each group, in the order the groups were given, 0
+	// where a group did not match it.
+	Fused float64
+	Ranks []int
+
 	rowid int64
 }
 
@@ -119,6 +126,19 @@ type Options struct {
 // An unknown opts.Type is a located error, same as query. An empty result is a
 // success, not an error (QRY-002).
 func Search(root, text string, opts Options) (Result, error) {
+	return SearchGroups(root, []string{text}, opts)
+}
+
+// FuseK is reciprocal rank fusion's k: a hit at rank r in a group adds
+// 1/(FuseK + r) to its fused score.
+const FuseK = 60
+
+// SearchGroups searches each text as its own group. One group is exactly
+// Search. Several groups are each ranked by the weighted BM25 and merged by
+// reciprocal rank fusion: a hit's Fused is the sum of 1/(FuseK + rank) over
+// the groups that matched it, best (highest) first, ties broken on type then
+// slug. Group order never changes the result.
+func SearchGroups(root string, texts []string, opts Options) (Result, error) {
 	type_ := opts.Type
 	resolved, err := introspect.LoadSchema(root)
 	if err != nil {
@@ -155,43 +175,144 @@ func Search(root, text string, opts Options) (Result, error) {
 	if res.Searched, err = buildFTS(conn, root, idx, type_); err != nil {
 		return Result{}, err
 	}
-	var terms []string
-	if opts.Plain {
-		terms, res.Capped = plainTerms(text)
-		if len(terms) == 0 {
-			return res, nil // no words to look for; MATCH rejects an empty expression
-		}
-		text = strings.Join(terms, " OR ")
-	}
 	capped := opts.Limit
 	if capped < 0 {
 		capped = 0 // a negative LIMIT is "unbounded" in SQLite
 	}
-	hits, err := match(conn, text, capped)
-	if err != nil {
-		return Result{}, err
-	}
-	res.Hits, res.Total = hits, len(hits)
-	if len(hits) == capped { // the limit may have dropped rows; count them all
-		if res.Total, err = count(conn, text); err != nil {
+	var terms []string
+	var found []Hit
+	if len(texts) == 1 {
+		text := texts[0]
+		if opts.Plain {
+			terms, res.Capped = plainTerms(text)
+			if len(terms) == 0 {
+				return res, nil // no words to look for; MATCH rejects an empty expression
+			}
+			text = strings.Join(terms, " OR ")
+		}
+		if found, err = match(conn, text, capped); err != nil {
+			return Result{}, err
+		}
+		res.Total = len(found)
+		if len(found) == capped { // the limit may have dropped rows; count them all
+			if res.Total, err = count(conn, text); err != nil {
+				return Result{}, err
+			}
+		}
+	} else {
+		if found, res.Total, terms, res.Capped, err = fuse(conn, texts, opts.Plain, capped); err != nil {
 			return Result{}, err
 		}
 	}
-	for i := range hits {
-		rtype, ok := resolved.Types.Get(hits[i].Type)
+	res.Hits = found
+	for i := range found {
+		rtype, ok := resolved.Types.Get(found[i].Type)
 		if ok && rtype.Storage.Layout == schema.LayoutCollection {
-			hits[i].Locator = hits[i].Path + "#" + hits[i].Slug
+			found[i].Locator = found[i].Path + "#" + found[i].Slug
 		}
 	}
-	if len(hits) > 0 {
-		annotate(hits, idx, opts.Now, staleDays)
+	if len(found) > 0 {
+		annotate(found, idx, opts.Now, staleDays)
 	}
-	if opts.Plain && len(hits) > 0 {
-		if err := matchShares(conn, hits, terms, res.Searched); err != nil {
+	if opts.Plain && len(found) > 0 {
+		if err := matchShares(conn, found, terms, res.Searched); err != nil {
 			return Result{}, err
 		}
 	}
 	return res, nil
+}
+
+// fuse ranks every group over the whole corpus and merges the rankings by
+// reciprocal rank fusion. It returns the best limit hits, how many entities
+// any group matched, the plain terms of every group (distinct and sorted, for
+// matchShares), and whether any plain group was cut at MaxPlainTerms.
+//
+// Groups run in sorted text order and a fused score sums its terms from the
+// best rank down, so neither the order of the groups nor floating-point
+// summation order can move a hit. A hit's snippet and Score come from the
+// group that ranked it best (ties: the lesser text).
+func fuse(conn *sqlite3.Conn, texts []string, plain bool, limit int) (
+	hits []Hit, total int, terms []string, capped bool, err error) {
+	order := make([]int, len(texts))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool { return texts[order[a]] < texts[order[b]] })
+
+	type entry struct {
+		hit  Hit
+		best int // the best rank, 1-based
+	}
+	byRow := map[int64]*entry{}
+	var rows []int64 // first-seen order; the sort below decides the output
+	seenTerm := map[string]bool{}
+	for _, g := range order {
+		expr := texts[g]
+		if plain {
+			groupTerms, groupCapped := plainTerms(expr)
+			capped = capped || groupCapped
+			if len(groupTerms) == 0 {
+				continue // no words to look for in this group
+			}
+			for _, t := range groupTerms {
+				if key := strings.ToLower(t); !seenTerm[key] {
+					seenTerm[key] = true
+					terms = append(terms, t)
+				}
+			}
+			expr = strings.Join(groupTerms, " OR ")
+		}
+		ranked, merr := match(conn, expr, -1)
+		if merr != nil {
+			return nil, 0, nil, false, merr
+		}
+		for i, h := range ranked {
+			rank := i + 1
+			e, ok := byRow[h.rowid]
+			if !ok {
+				h.Ranks = make([]int, len(texts))
+				e = &entry{hit: h, best: rank}
+				byRow[h.rowid] = e
+				rows = append(rows, h.rowid)
+			} else if rank < e.best {
+				ranks := e.hit.Ranks
+				e.hit, e.best = h, rank
+				e.hit.Ranks = ranks
+			}
+			e.hit.Ranks[g] = rank
+		}
+	}
+	sort.Strings(terms)
+
+	hits = make([]Hit, 0, len(rows))
+	for _, row := range rows {
+		h := byRow[row].hit
+		ranks := make([]int, 0, len(h.Ranks))
+		for _, r := range h.Ranks {
+			if r > 0 {
+				ranks = append(ranks, r)
+			}
+		}
+		sort.Ints(ranks)
+		for _, r := range ranks {
+			h.Fused += 1 / float64(FuseK+r)
+		}
+		hits = append(hits, h)
+	}
+	sort.Slice(hits, func(a, b int) bool {
+		if hits[a].Fused != hits[b].Fused {
+			return hits[a].Fused > hits[b].Fused
+		}
+		if hits[a].Type != hits[b].Type {
+			return hits[a].Type < hits[b].Type
+		}
+		return hits[a].Slug < hits[b].Slug
+	})
+	total = len(hits)
+	if len(hits) > limit {
+		hits = hits[:limit]
+	}
+	return hits, total, terms, capped, nil
 }
 
 // matchShares sets each hit's Match and TitleMatch. A word weighs

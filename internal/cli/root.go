@@ -45,7 +45,7 @@ func Execute(argv []string) int {
 		return 2
 	}
 	if isCompletionRequest(rest) {
-		root.SetOut(skipBlankLines{os.Stdout})
+		rest = prepareCompletionRequest(root, rest)
 	}
 	root.SetArgs(rest)
 	cmd, err := root.ExecuteC()
@@ -247,6 +247,7 @@ func newRoot() *cobra.Command {
 	registerSchema(root)
 	registerCompletion(root)
 	dropHelpShorthand(root) // after every registration, so subcommands are covered
+	wireCompletions(root)
 	return root
 }
 

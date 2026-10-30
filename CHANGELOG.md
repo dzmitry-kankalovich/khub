@@ -9,8 +9,10 @@ Notable changes to khub. Format follows [Keep a Changelog](https://keepachangelo
 - **`khub completion <bash|zsh|fish|powershell>`.** Prints a shell completion
   script. At TAB time the script asks the binary itself (`khub __complete`), so
   it completes the commands, subcommands and options the installed khub has,
-  plus a directory after `-C`. `completion` was a usage error until now;
-  `--install-completion` still is.
+  the closed value sets (`--format`, `wire --target`, `init`'s presets), and
+  paths only where a value is a path (`-C`, `--body-file`). Workspace values
+  (types, ids) are not completed. bash needs 4.1+ with bash-completion.
+  `completion` was a usage error until now; `--install-completion` still is.
 
 ## [0.30.0] — 2026-10-28
 

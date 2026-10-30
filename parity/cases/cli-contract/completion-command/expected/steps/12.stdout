@@ -1,3 +1,4 @@
-status	Summarize the workspace: counts, draft/active, orphan/stale, OKF conformance.
-stale	List entities past the `updated` threshold, oldest first: khub stale [--days N].
+text
+json
+ids
 :4

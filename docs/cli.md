@@ -266,12 +266,33 @@ Every finding carries a stable location — the `field` on a `validate` row, the
 `khub completion <bash|zsh|fish|powershell>` prints a completion script for that shell on stdout. It reads no workspace.
 
 ```bash
-source <(khub completion bash)                          # this session
-khub completion zsh > "${fpath[1]}/_khub"               # every new zsh
+# bash 4.1+ with bash-completion v2 (macOS: brew install bash bash-completion@2)
+d="${BASH_COMPLETION_USER_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion}/completions"
+mkdir -p "$d" && khub completion bash > "$d/khub"    # loaded on demand by every new bash
+eval "$(khub completion bash)"                       # or: this session only (~/.bashrc for every one)
+
+khub completion zsh > "${fpath[1]}/_khub"            # zsh, with compinit enabled
 khub completion fish > ~/.config/fish/completions/khub.fish
-khub completion powershell | Out-String | Invoke-Expression
+khub completion powershell | Out-String | Invoke-Expression   # add to $PROFILE to keep it
 ```
 
-The bash script needs the `bash-completion` package. The script holds no list of commands: at TAB time it runs `khub __complete <words…>`, so what it offers is always what the installed binary accepts. It completes command and subcommand names, each command's options, the shell argument of `completion`, and a directory after `-C`. It does not complete type names, ids or option values yet. Candidates carry each command's one-line help; set `KHUB_COMPLETION_DESCRIPTIONS=false` to drop them. `__complete` is hidden plumbing for the scripts, not a command to call. `--install-completion`, which Typer apps carry, stays a usage error.
+**bash 3.2.** The script needs bash-completion, which macOS's stock `/bin/bash` 3.2 does not ship. There, `source <(khub completion bash)` silently loads nothing (bash 3.2 cannot source a process substitution), and even the `eval` form fails at the first TAB without bash-completion. Use a Homebrew bash 4.1+ as above.
+
+The script holds no list of commands: at TAB time it runs `khub __complete <words…>`, so what it offers is always what the installed binary accepts. Nothing it offers is read from a workspace.
+
+| TAB after | Offers |
+|---|---|
+| `khub`, a group (`schema`) | command and subcommand names, with their one-line help |
+| `-` | the command's options |
+| `-C`, `--workspace`, `-C<dir>` | directories |
+| `--format` | the command's closed set: `text`/`json`, plus `ids` (`query`, `search`), `table`/`raw` (`get`); `tree`/`json` for `impact` |
+| `wire --target` | `claude`, `agents`, `both` |
+| `init` | the packaged presets, then a directory for PATH |
+| `completion` | `bash`, `zsh`, `fish`, `powershell` |
+| `--body-file`, `viz --out` | files |
+| `init --preset-source` | directories |
+| anything else: types, ids, predicates, field values, numbers | nothing, and no file names |
+
+Workspace-defined values (type names, ids, predicates) are not completed: that would read the workspace on every TAB. Candidates carry each command's one-line help; `KHUB_COMPLETION_DESCRIPTIONS=false` (or cobra's global `COBRA_COMPLETION_DESCRIPTIONS=false`) drops them. khub emits no cobra "active help", so `KHUB_ACTIVE_HELP` has nothing to turn off. `__complete` is hidden plumbing for the scripts, not a command to call: its output is cobra's line protocol (candidates, then `:<directive>`), it takes no `--format`, and it reads no workspace. `--install-completion`, which Typer apps carry, stays a usage error.
 
 *Planned verbs (not yet shipped): `path`, `build`, `export --okf`, `diff-preset`, `rename`. See the repo for status.*

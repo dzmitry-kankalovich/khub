@@ -9,6 +9,8 @@ package project
 import (
 	"testing"
 	"time"
+
+	"github.com/endgame-build/khub/internal/omap"
 )
 
 var now = time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC)
@@ -318,5 +320,48 @@ func TestIsStale(t *testing.T) {
 	future := now.AddDate(0, 0, 5).Format("2006-01-02")
 	if IsStale(meta(kv{"updated", future}), now, 90, nil) {
 		t.Fatal("a future date is not stale")
+	}
+}
+
+func TestIsExpired(t *testing.T) {
+	today := now.Format("2006-01-02")
+	yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
+	tomorrow := now.AddDate(0, 0, 1).Format("2006-01-02")
+	for _, tc := range []struct {
+		name string
+		m    *omap.Map
+		want bool
+	}{
+		{"absent never expires", meta(kv{"title", "x"}), false},
+		{"null never expires", meta(kv{"stale_after", nil}), false},
+		{"tomorrow has not expired", meta(kv{"stale_after", tomorrow}), false},
+		{"today has expired (>=)", meta(kv{"stale_after", today}), true},
+		{"yesterday has expired", meta(kv{"stale_after", yesterday}), true},
+		{"a time of day does not move the day", meta(kv{"stale_after", today + "T23:59:00"}), true},
+		{"a date object", meta(kv{"stale_after", date(yesterday)}), true},
+		{"unparseable is surfaced", meta(kv{"stale_after", "someday"}), true},
+	} {
+		if got := IsExpired(tc.m, now); got != tc.want {
+			t.Errorf("%s: IsExpired = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// The union is what query/search/`khub stale` report; status keeps the two
+// apart. An expiry rescues nothing from the age rule, and a fresh `updated`
+// rescues nothing from the expiry.
+func TestIsStaleIsTheUnion(t *testing.T) {
+	old := now.AddDate(0, 0, -200).Format("2006-01-02")
+	fresh := now.Format("2006-01-02")
+	past := now.AddDate(0, 0, -1).Format("2006-01-02")
+	future := now.AddDate(0, 0, 30).Format("2006-01-02")
+	if !IsStale(meta(kv{"updated", fresh}, kv{"stale_after", past}), now, 90, nil) {
+		t.Fatal("a fresh entity past its stale_after is stale")
+	}
+	if !IsStale(meta(kv{"updated", old}, kv{"stale_after", future}), now, 90, nil) {
+		t.Fatal("an expiry still ahead does not rescue an untouched entity")
+	}
+	if IsAged(meta(kv{"updated", fresh}, kv{"stale_after", past}), now, 90, nil) {
+		t.Fatal("IsAged ignores stale_after")
 	}
 }

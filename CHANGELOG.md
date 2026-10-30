@@ -2,6 +2,24 @@
 
 Notable changes to khub. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); khub is pre-release.
 
+## [Unreleased]
+
+### Added
+
+- **`stale_after`.** A base `datetime` attribute: an authored expiry (OKF
+  §5.5), set with `add --stale-after <date>` or `edit`, never computed. An
+  entity is stale on and after that day, beside the existing age rule.
+  `query --stale`, the read rows' `stale` flag and `khub stale` take the union.
+- **`khub stale` `reason`.** Each row says `age` or `expired`; `expired` wins
+  when both hold. An expired entity with no judgeable date lists with null
+  `effective_date` and `age`.
+- **`status` `expired`.** The count of entities past their `stale_after`,
+  beside `stale`, which keeps counting the age rule alone, plain and JSON.
+  The two are never summed.
+- **`check --stale`.** An opt-in gate: active entities past their
+  `stale_after` are reported in `expired` and fail the check. The key is
+  present only under the flag.
+
 ## [0.30.0] — 2026-10-28
 
 Storage can now follow a hub's existing nesting, relations can point to files

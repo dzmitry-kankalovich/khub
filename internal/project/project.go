@@ -4,7 +4,8 @@
 //
 // A minimal, derived-at-runtime view of the entity tree: per-type counts, the
 // draft/active split, orphan (zero edges in or out), stale (older than
-// stale_days), and the OKF-conformance flag. Counts are never stored (WS-006);
+// stale_days), expired (past an authored stale_after), and the
+// OKF-conformance flag. Counts are never stored (WS-006);
 // orphan and stale are core projection properties computed identically for
 // status, query, and check (WS-008).
 //
@@ -32,7 +33,8 @@ type Projection struct {
 	Draft         int
 	Active        int
 	Orphan        int
-	Stale         int
+	Stale         int // the age rule only (IsAged): untouched past stale_days
+	Expired       int // the authored rule only (IsExpired): past stale_after
 	OKFConformant bool
 	Stray         int
 	Malformed     int
@@ -71,7 +73,7 @@ func Project(root string, staleDays int, now time.Time) (*Projection, error) {
 		counts.Set(node.Type, n+1)
 	}
 
-	draft, active, stale := 0, 0, 0
+	draft, active, stale, expired := 0, 0, 0, 0
 	brokenRef := false
 	hasOut := map[index.Node]bool{}
 	hasIn := map[index.Node]bool{}
@@ -83,8 +85,14 @@ func Project(root string, staleDays int, now time.Time) (*Projection, error) {
 		} else {
 			active++
 		}
-		if IsStale(meta, now, staleDays, nil) {
+		// Counted apart and never summed: an entity can be both, and the two
+		// mean different things (a guess about attention vs a statement about
+		// the content).
+		if IsAged(meta, now, staleDays, nil) {
 			stale++
+		}
+		if IsExpired(meta, now) {
+			expired++
 		}
 		rtype, _ := resolved.Types.Get(node.Type)
 		for _, predicate := range rtype.Relations.Keys() {
@@ -133,12 +141,13 @@ func Project(root string, staleDays int, now time.Time) (*Projection, error) {
 	}
 
 	return &Projection{
-		Counts: counts,
-		Total:  total,
-		Draft:  draft,
-		Active: active,
-		Orphan: orphan,
-		Stale:  stale,
+		Counts:  counts,
+		Total:   total,
+		Draft:   draft,
+		Active:  active,
+		Orphan:  orphan,
+		Stale:   stale,
+		Expired: expired,
 		// OKF conformance means the tree would export as a valid bundle: every
 		// file in a layout is a typed entity (no strays, no malformed) and every
 		// typed/union edge resolves.
@@ -173,14 +182,39 @@ func EffectiveDate(meta *omap.Map, gitDate *time.Time) (*time.Time, string) {
 	return nil, "none"
 }
 
-// IsStale is is_stale: no timestamp to judge against is never stale; a
-// present-but-unparseable date is surfaced as stale, not silently dropped.
+// IsStale is the single staleness verdict query, search and `khub stale`
+// share: the age rule OR the authored expiry. `status` never reports this
+// union; it counts IsAged and IsExpired apart.
 func IsStale(meta *omap.Map, now time.Time, staleDays int, gitDate *time.Time) bool {
+	return IsAged(meta, now, staleDays, gitDate) || IsExpired(meta, now)
+}
+
+// IsAged is is_stale's age rule: the effective date is more than staleDays
+// old. No timestamp to judge against is never aged; a present-but-unparseable
+// date is surfaced as aged, not silently dropped.
+func IsAged(meta *omap.Map, now time.Time, staleDays int, gitDate *time.Time) bool {
 	date, source := EffectiveDate(meta, gitDate)
 	if source == "none" {
 		return false
 	}
 	return date == nil || daysBetween(civil(now), *date) > staleDays
+}
+
+// StaleAfterField is the base attribute an author sets to declare an expiry.
+const StaleAfterField = "stale_after"
+
+// IsExpired is the authored rule: `stale_after` is set and today is on or
+// past its date. It is judged by calendar day, the clock every staleness
+// verdict runs on, so a time of day in the value does not move it. An absent
+// or null value never expires; a present-but-unparseable one is surfaced as
+// expired, as the age rule surfaces an unparseable `updated`.
+func IsExpired(meta *omap.Map, now time.Time) bool {
+	raw, ok := meta.Get(StaleAfterField)
+	if !ok || raw == nil {
+		return false
+	}
+	date := asDate(raw)
+	return date == nil || !civil(now).Before(*date)
 }
 
 // civil normalizes a time to its calendar date at UTC midnight, so day

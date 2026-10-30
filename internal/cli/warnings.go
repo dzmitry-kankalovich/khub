@@ -38,7 +38,27 @@ func warnAfterWrite(ws string) {
 	if err != nil {
 		return
 	}
-	for _, f := range findings {
-		fmt.Fprintln(os.Stderr, "warning: "+f.Line())
+	for _, line := range warningLines(findings) {
+		fmt.Fprintln(os.Stderr, line)
 	}
+}
+
+// warningCap bounds the lines one write prints. A session's first write in a
+// workspace with a long backlog would otherwise print every finding, burying
+// the write's own result; the rest are recorded as shown all the same, and
+// `check` lists them.
+const warningCap = 20
+
+// warningLines is the stderr text for a write's findings: the first
+// warningCap of them, then one line counting the rest.
+func warningLines(findings []integrity.Finding) []string {
+	lines := []string{}
+	for i, f := range findings {
+		if i == warningCap {
+			lines = append(lines, fmt.Sprintf("warning: … and %d more; run khub check", len(findings)-warningCap))
+			break
+		}
+		lines = append(lines, "warning: "+f.Line())
+	}
+	return lines
 }

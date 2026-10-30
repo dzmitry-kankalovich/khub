@@ -11,7 +11,8 @@ Notable changes to khub. Format follows [Keep a Changelog](https://keepachangelo
   (`draft: false`) entity, reports each disagreement (entity, field, ours,
   theirs, source) under a named strategy (`manual` by default), and proposes
   identity matches with their evidence instead of merging. A design only; no
-  command changes.
+  command changes. `docs/build-hub-preset.md` now records a facet id as an
+  `aliases` entry (`facet:FUNC-007`) instead of a tag.
 
 ## [0.30.0] — 2026-10-28
 

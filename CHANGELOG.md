@@ -2,6 +2,21 @@
 
 Notable changes to khub. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); khub is pre-release.
 
+## [Unreleased]
+
+### Added
+
+- **Point-in-time reads.** The global `--at <ref|date>` runs any read command
+  (`status`, `get`, `query`, `search`, `neighbors`, `impact`, `history`,
+  `validate`, `check`, `stale`, `schema`) against the workspace as a git commit
+  holds it: a commit, branch or tag, or a date (`YYYY-MM-DD`, the last commit
+  on HEAD at or before that day, UTC). The tree is read into a scratch
+  directory and removed afterwards; the repository is never touched. Writes
+  refuse with `read_only_at`; `no_git_history` and `unknown_revision` name the
+  other refusals. (#34)
+- **`--as-of <date>`** pins "today" for the `stale` flag and `khub stale`, so a
+  date-relative read is reproducible. A date `--at` implies it. (#34)
+
 ## [0.30.0] — 2026-10-28
 
 Storage can now follow a hub's existing nesting, relations can point to files

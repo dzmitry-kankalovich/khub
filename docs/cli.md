@@ -10,12 +10,33 @@ The CLI is a thin, schema-introspecting adapter over the core library's verbs (c
 |---|---|
 | `-C, --workspace <path>` | Operate on this workspace instead of the working directory. Default: the nearest `.khub/` above the working directory. Given a path, khub resolves the nearest `.khub/` at or above it. |
 | `--format <json\|table>` | Output shape. Default: table on a TTY, json otherwise — for **reads and writes alike**. Some commands add `ids`, `raw`, or `tree`. The operator commands (`reindex`, `viz`, `serve`, `backfill`, `wire`) print prose and take no `--format`. |
+| `--at <ref\|date>` | Read the workspace as a git commit holds it. See [Point-in-time reads](#point-in-time-reads). Read commands only. |
+| `--as-of <date>` | Pin "today" (`YYYY-MM-DD`) for the date-relative reads: the `stale` flag on `query`/`search`/`status` rows and `khub stale`. |
 | `--version` | Print the khub version and exit. |
 | `--help` | Show help. |
 
-`-C/--workspace` and `--version` are parsed before the command name — put them first (`khub -C <path> <command>`), the git convention. `--format` and the other per-command options follow the command as usual.
+`-C/--workspace`, `--at`, `--as-of` and `--version` are parsed before the command name — put them first (`khub -C <path> <command>`), the git convention. `--format` and the other per-command options follow the command as usual.
 
 Read commands include `draft` entities in scope and surface each entity's `orphan`/`stale` flag by default; `--active`/`--draft` and `--orphan`/`--stale` narrow the set. An entity of a type declaring `orphan: true` never carries the flag.
+
+### Point-in-time reads
+
+`khub --at <ref|date> <command>` runs a read command against the workspace as one git commit holds it. The graph is derived, never stored, so a past commit's tree is all a past projection needs: khub writes that tree to a scratch directory, runs the command there, and removes the directory on exit. The working tree, the index and the repository are never touched, and uncommitted changes are not seen.
+
+- **The value.** `YYYY-MM-DD` is a date: the last commit on HEAD's first-parent line committed at or before the end of that day, UTC. Anything else is a git revision — a commit id, branch, tag, or `HEAD~3`. A date wins over a ref spelled like one; name such a ref `refs/tags/<name>`.
+- **Where.** The workspace is found as without `--at` (`-C`, then the walk up to `.khub/`), and the snapshot takes the same directory within the repository, so a workspace nested in a larger repository is read from the same place.
+- **"Today".** A date `--at` also pins today to that date, so the `stale` flag and `khub stale` judge entities as of that day; `--as-of` overrides it. A ref leaves the clock alone. `khub stale` reads commit dates up to the snapshot's commit, never later ones.
+- **Commands.** `status`, `get`, `query`, `search`, `neighbors`, `impact`, `history`, `validate`, `check`, `stale`, and `schema` with `types`, `show`, `base`, `edges` and `diff`. Every other command writes, serves the live tree, or writes a file the scratch tree would swallow, and refuses with `read_only_at` (exit 2) before it runs.
+- **Output.** Exactly the command's own shape: paths are workspace-relative, as without `--at`. Blobs are read as stored (no export attributes, smudge filters or line-ending conversion); a submodule is an empty directory.
+
+| Code | When |
+|---|---|
+| `no_git_history` | the workspace is not in a git repository, or the repository has no commits |
+| `unknown_revision` | the value names no commit, or no commit on HEAD is that old |
+| `no_workspace` | the commit holds no `.khub/` where the workspace lives |
+| `read_only_at` | the command is not a read |
+
+`--as-of <date>` on its own pins today for the live workspace: `khub --as-of 2026-01-01 stale` is reproducible whatever day it runs. A malformed date is a usage error (exit 2). It changes no write: `created` and `updated` stamps keep the real clock.
 
 ### khub never prompts
 

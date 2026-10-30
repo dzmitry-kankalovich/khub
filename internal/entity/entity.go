@@ -804,7 +804,7 @@ func edgeContext(root, id, predicate string) (
 	rtype, _ := resolved.Types.Get(node.Type)
 	rel, ok := rtype.Relations.Get(predicate)
 	if !ok {
-		return nil, nil, index.Node{}, nil, errs.IllegalPredicate(predicate, node.Type)
+		return nil, nil, index.Node{}, nil, errs.IllegalPredicate(predicate, node.Type, rtype.Relations.Keys())
 	}
 	return resolved, index.Filter(idx, index.StrayNodes(idx)), node, rel, nil
 }

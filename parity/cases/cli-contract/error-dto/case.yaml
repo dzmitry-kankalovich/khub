@@ -1,0 +1,17 @@
+# The refusal envelope's machine fields (docs/cli-output-contract.md): `field`,
+# `expected` and `suggestion`, each present only when the refusal has one. One
+# near miss per suggesting code, plus a far miss that must stay silent.
+steps:
+- argv: ["init", "build-hub", ".", "--no-wire"]
+- argv: ["add", "requirement", "--title", "Settle", "--kind", "functionl"]
+- argv: ["add", "requirement", "--title", "Settle", "--kind", "functional"]
+- argv: ["get", "req-setle"]
+- argv: ["get", "requirement/req-setle"]
+- argv: ["get", "zzzz"]
+- argv: ["link", "req-settle", "related", "req-setle"]
+- argv: ["link", "req-settle", "relatd", "req-settle"]
+- argv: ["query", "--type", "requirment"]
+- argv: ["query", "--type", "requirement", "--has", "knd"]
+- argv: ["query", "--type", "requirement", "--has", "nope"]
+- argv: ["wire", "--target", "agent"]
+- argv: ["init", "firm-op", "sub"]

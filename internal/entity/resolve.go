@@ -88,9 +88,39 @@ func aliasOwner(idx *index.Index, alias string, keep func(index.Node) bool) (own
 func resolveAlias(idx *index.Index, alias, id string, keep func(index.Node) bool) (index.Node, error) {
 	owner, found, err := aliasOwner(idx, alias, keep)
 	if err == nil && !found {
-		err = errs.LookupError(id)
+		err = errs.LookupError(id).WithSuggestion(nearestNode(idx, id, keep))
 	}
 	return owner, err
+}
+
+// nearestNode is the id of the node among those keep accepts whose spelling is
+// nearest want (errs.Nearest's budget), or "". A qualified want is matched
+// against qualified ids, a bare one against slugs; the answer keeps the
+// caller's shape unless the bare slug would be ambiguous, so it always
+// resolves to exactly the node suggested.
+func nearestNode(idx *index.Index, want string, keep func(index.Node) bool) string {
+	qualified := strings.Contains(want, "/")
+	var forms []string
+	var nodes []index.Node
+	for _, n := range idx.Order {
+		if !keep(n) {
+			continue
+		}
+		form := n.Slug
+		if qualified {
+			form = n.ID()
+		}
+		forms = append(forms, form)
+		nodes = append(nodes, n)
+	}
+	i := errs.NearestIndex(want, forms)
+	if i < 0 {
+		return ""
+	}
+	if n := nodes[i]; qualified || len(idx.TypesBySlug[n.Slug]) > 1 {
+		return n.ID()
+	}
+	return nodes[i].Slug
 }
 
 // aliasTarget rewrites a write-time relation value that names an entity only
@@ -196,7 +226,11 @@ func resolveWriteTarget(
 		return matches, nil
 	}
 	if len(matches) == 0 {
-		return nil, errs.ReferentialIntegrity(strings.Join(rel.Targets, "/"), target, predicate, noun)
+		near := nearestNode(idx, target, func(n index.Node) bool {
+			return rel.Kind == schema.KindAny || slices.Contains(rel.Targets, n.Type)
+		})
+		return nil, errs.ReferentialIntegrity(strings.Join(rel.Targets, "/"), target, predicate, noun).
+			WithSuggestion(near)
 	}
 	if !strings.Contains(target, "/") && len(matches) > 1 {
 		candidates := make([]string, 0, len(matches))

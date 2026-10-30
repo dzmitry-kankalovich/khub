@@ -11,12 +11,23 @@ import (
 
 // Located is core.errors.LocatedError: a schema error that names where it
 // occurred. Error() is the message alone, exactly like __str__.
+//
+// Field, Expected and Suggestion are the machine half of the error DTO
+// (docs/cli-output-contract.md): the CLI's JSON envelope carries each one only
+// when it is set, so an agent can correct a call without parsing the message.
+// Field is the schema attribute or relation at fault; Expected the closed set
+// of values the call could have used, in schema or declaration order;
+// Suggestion the single nearest of those (or of the workspace's ids), chosen
+// by Nearest — empty when nothing is close enough to be worth saying.
 type Located struct {
-	Code     string
-	Message  string
-	Type     string
-	Relation string
-	Target   string
+	Code       string
+	Message    string
+	Type       string
+	Relation   string
+	Target     string
+	Field      string
+	Expected   []string
+	Suggestion string
 }
 
 // Error returns the message alone, never the code or the location fields.
@@ -99,9 +110,11 @@ func quoteAll(ss []string) []string {
 // not ship; the message lists the ones it does.
 func UnknownPreset(name string, known []string) *Located {
 	return &Located{
-		Code:    "unknown_preset",
-		Message: fmt.Sprintf("Unknown preset '%s'. Known presets: %s", name, strings.Join(known, ", ")),
-		Target:  name,
+		Code:       "unknown_preset",
+		Message:    fmt.Sprintf("Unknown preset '%s'. Known presets: %s", name, strings.Join(known, ", ")),
+		Target:     name,
+		Expected:   known,
+		Suggestion: Nearest(name, known),
 	}
 }
 
@@ -120,9 +133,11 @@ func TargetNotEmpty(path string) *Located {
 // UnknownType is `unknown_type`: a type the resolved schema does not declare.
 func UnknownType(name, preset string, known []string) *Located {
 	return &Located{
-		Code:    "unknown_type",
-		Message: fmt.Sprintf("No type '%s' in the %s schema. Known types: %s", name, preset, strings.Join(known, ", ")),
-		Type:    name,
+		Code:       "unknown_type",
+		Message:    fmt.Sprintf("No type '%s' in the %s schema. Known types: %s", name, preset, strings.Join(known, ", ")),
+		Type:       name,
+		Expected:   known,
+		Suggestion: Nearest(name, known),
 	}
 }
 
@@ -145,20 +160,26 @@ func NoPreset(path string) *Located {
 	}
 }
 
+// wireTargets is the closed set `wire --target` accepts, in the message's order.
+var wireTargets = []string{"claude", "agents", "both"}
+
 // BadTarget is `bad_target`: a `wire --target` other than claude, agents or
 // both.
 func BadTarget(value string) *Located {
 	return &Located{
-		Code:    "bad_target",
-		Message: fmt.Sprintf("Unknown --target '%s'. Choose claude, agents, or both", value),
-		Target:  value,
+		Code:       "bad_target",
+		Message:    fmt.Sprintf("Unknown --target '%s'. Choose claude, agents, or both", value),
+		Target:     value,
+		Expected:   wireTargets,
+		Suggestion: Nearest(value, wireTargets),
 	}
 }
 
 // --- authoring ---------------------------------------------------------------
 
 // ReferentialIntegrity is `referential_integrity`: a relation names a target
-// entity that does not exist. noun defaults to "relation".
+// entity that does not exist. noun defaults to "relation". The caller, which
+// holds the index, sets the suggestion with WithSuggestion.
 func ReferentialIntegrity(targetType, target, predicate, noun string) *Located {
 	if noun == "" {
 		noun = "relation"
@@ -169,6 +190,7 @@ func ReferentialIntegrity(targetType, target, predicate, noun string) *Located {
 		Type:     targetType,
 		Relation: predicate,
 		Target:   target,
+		Field:    predicate,
 	}
 }
 
@@ -204,6 +226,8 @@ func IDPrefixUndecided(type_, by string, members []string) *Located {
 			"pass it, or name the entity with --id <slug>", type_, by, strings.Join(members, "|")),
 		Type:     type_,
 		Relation: by,
+		Field:    by,
+		Expected: members,
 	}
 }
 
@@ -253,16 +277,20 @@ func StrictUnknownField(field string) *Located {
 		Code:    "strict_unknown_field",
 		Message: fmt.Sprintf("Unknown field '%s' rejected under --strict", field),
 		Target:  field,
+		Field:   field,
 	}
 }
 
 // EnumViolation is `enum_violation`: a value outside the attribute's enum.
 func EnumViolation(value, field string, allowed []string) *Located {
 	return &Located{
-		Code:     "enum_violation",
-		Message:  fmt.Sprintf("'%s' is not a valid %s (%s)", value, field, strings.Join(allowed, ", ")),
-		Relation: field,
-		Target:   value,
+		Code:       "enum_violation",
+		Message:    fmt.Sprintf("'%s' is not a valid %s (%s)", value, field, strings.Join(allowed, ", ")),
+		Relation:   field,
+		Target:     value,
+		Field:      field,
+		Expected:   allowed,
+		Suggestion: Nearest(value, allowed),
 	}
 }
 
@@ -274,6 +302,7 @@ func PatternViolation(value, field, pattern string) *Located {
 		Message:  fmt.Sprintf("'%s' does not match the pattern for %s (%s)", value, field, pattern),
 		Relation: field,
 		Target:   value,
+		Field:    field,
 	}
 }
 
@@ -285,12 +314,23 @@ func NumberViolation(value, field string) *Located {
 		Message:  fmt.Sprintf("'%s' is not a valid number for %s", value, field),
 		Relation: field,
 		Target:   value,
+		Field:    field,
 	}
 }
 
-// LookupError is `lookup_error`: no entity resolves to the id.
+// LookupError is `lookup_error`: no entity resolves to the id. The caller,
+// which holds the index, sets the nearest id with WithSuggestion — that is
+// what lets an agent retry a misspelt id instead of abandoning the lookup.
 func LookupError(id string) *Located {
 	return &Located{Code: "lookup_error", Message: fmt.Sprintf("No entity '%s' found", id), Target: id}
+}
+
+// WithSuggestion sets the error's suggestion and returns it, for a factory
+// whose candidates only the caller can see (the workspace's ids). The message
+// is untouched: it is pinned prose, and the suggestion is the machine field.
+func (e *Located) WithSuggestion(s string) *Located {
+	e.Suggestion = s
+	return e
 }
 
 // --- query -------------------------------------------------------------------
@@ -303,8 +343,11 @@ func UnknownFilterField(field, type_ string, declared []string) *Located {
 		Code: "filter_error",
 		Message: fmt.Sprintf("No field '%s' on type '%s'. Declared fields: %s",
 			field, type_, strings.Join(declared, ", ")),
-		Type:   type_,
-		Target: field,
+		Type:       type_,
+		Target:     field,
+		Field:      field,
+		Expected:   declared,
+		Suggestion: Nearest(field, declared),
 	}
 }
 
@@ -329,9 +372,10 @@ func BadSearchQuery(text, detail string) *Located {
 // one type.
 func AmbiguousSlug(slug string, candidates []string) *Located {
 	return &Located{
-		Code:    "ambiguity_error",
-		Message: fmt.Sprintf("Slug '%s' is ambiguous: %s. Qualify as type/slug", slug, strings.Join(candidates, ", ")),
-		Target:  slug,
+		Code:     "ambiguity_error",
+		Message:  fmt.Sprintf("Slug '%s' is ambiguous: %s. Qualify as type/slug", slug, strings.Join(candidates, ", ")),
+		Target:   slug,
+		Expected: candidates,
 	}
 }
 
@@ -341,18 +385,22 @@ func AmbiguousAlias(alias string, candidates []string) *Located {
 		Code: "ambiguity_error",
 		Message: fmt.Sprintf("Alias '%s' is ambiguous: %s. Qualify as type/slug",
 			alias, strings.Join(candidates, ", ")),
-		Target: alias,
+		Target:   alias,
+		Expected: candidates,
 	}
 }
 
 // IllegalPredicate is `illegal_predicate`: a relation the source type does
-// not declare.
-func IllegalPredicate(predicate, type_ string) *Located {
+// not declare. declared is the type's relations, in declaration order.
+func IllegalPredicate(predicate, type_ string, declared []string) *Located {
 	return &Located{
-		Code:     "illegal_predicate",
-		Message:  fmt.Sprintf("Predicate '%s' is not legal for type '%s'", predicate, type_),
-		Type:     type_,
-		Relation: predicate,
+		Code:       "illegal_predicate",
+		Message:    fmt.Sprintf("Predicate '%s' is not legal for type '%s'", predicate, type_),
+		Type:       type_,
+		Relation:   predicate,
+		Field:      predicate,
+		Expected:   declared,
+		Suggestion: Nearest(predicate, declared),
 	}
 }
 
@@ -364,6 +412,7 @@ func CardinalityViolation(predicate string) *Located {
 		Message: fmt.Sprintf("Predicate '%s' is single-valued; "+
 			"`khub edit <id> %s <target>` replaces the current value", predicate, predicate),
 		Relation: predicate,
+		Field:    predicate,
 	}
 }
 
@@ -447,6 +496,7 @@ func InvalidPathValue(type_, field, value string) *Located {
 			field, type_, value),
 		Type:   type_,
 		Target: value,
+		Field:  field,
 	}
 }
 
@@ -460,4 +510,69 @@ func PathIgnored(type_, path string) *Located {
 		Type:   type_,
 		Target: path,
 	}
+}
+
+// --- did you mean -------------------------------------------------------------
+
+// Nearest is the candidate closest to want, or "" when nothing is close enough
+// to be worth saying. A wrong guess is worse than silence, so the budget is
+// tight: one edit per three characters typed, never more than two — 'nope' is
+// two edits from 'type' and must not be pointed at it, while 'statsu' still
+// reaches 'status'. Under three characters only a difference of case is
+// suggested. The comparison folds case, so a wrong case alone always
+// qualifies, and an exact match is never suggested back. Ties go to the
+// earlier candidate, so the answer follows the caller's (declaration) order.
+//
+// This is the DTO's budget. The usage errors' "Did you mean" (internal/cli
+// suggest) keeps its own, looser one over the same EditDistance: command and
+// option names are a small fixed set, entity values are not.
+func Nearest(want string, candidates []string) string {
+	if i := NearestIndex(want, candidates); i >= 0 {
+		return candidates[i]
+	}
+	return ""
+}
+
+// NearestIndex is Nearest's position in candidates, or -1. It serves a caller
+// that matches on one spelling and suggests another (a bare slug matched, the
+// qualified id suggested).
+func NearestIndex(want string, candidates []string) int {
+	limit := min(2, len([]rune(want))/3)
+	folded := strings.ToLower(want)
+	best, bestDist := -1, 0
+	for i, c := range candidates {
+		if c == want {
+			continue
+		}
+		d := EditDistance(folded, strings.ToLower(c))
+		if d > limit {
+			continue
+		}
+		if best < 0 || d < bestDist {
+			best, bestDist = i, d
+		}
+	}
+	return best
+}
+
+// EditDistance is plain Levenshtein over runes, two rows.
+func EditDistance(a, b string) int {
+	ar, br := []rune(a), []rune(b)
+	prev := make([]int, len(br)+1)
+	cur := make([]int, len(br)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ar); i++ {
+		cur[0] = i
+		for j := 1; j <= len(br); j++ {
+			cost := 1
+			if ar[i-1] == br[j-1] {
+				cost = 0
+			}
+			cur[j] = min(min(cur[j-1]+1, prev[j]+1), prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(br)]
 }

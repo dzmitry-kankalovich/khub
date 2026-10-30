@@ -117,6 +117,20 @@ func TargetNotEmpty(path string) *Located {
 	}
 }
 
+// NoSample is `no_sample`: `init --sample` for a preset that ships no sample
+// workspace; the message lists the presets that do.
+func NoSample(name string, withSample []string) *Located {
+	offer := "No preset ships one"
+	if len(withSample) > 0 {
+		offer = "Presets with a sample: " + strings.Join(withSample, ", ")
+	}
+	return &Located{
+		Code:    "no_sample",
+		Message: fmt.Sprintf("Preset '%s' ships no sample workspace. %s", name, offer),
+		Target:  name,
+	}
+}
+
 // UnknownType is `unknown_type`: a type the resolved schema does not declare.
 func UnknownType(name, preset string, known []string) *Located {
 	return &Located{

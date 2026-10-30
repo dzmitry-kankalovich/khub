@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -66,6 +67,11 @@ type InitResult struct {
 	// them IS the override mechanism — so a re-scaffold reports them instead
 	// of silently restoring the preset's copy.
 	Preserved []string
+	// SampleCreated lists the sample files this run copied in, slash paths
+	// relative to the workspace root; nil when the run was not asked for the
+	// sample. Creations only: a file already there is left alone and not
+	// listed.
+	SampleCreated []string
 }
 
 // InitOptions carries init_workspace's keyword arguments. PresetSource "" is
@@ -75,6 +81,8 @@ type InitOptions struct {
 	PresetSource string
 	Name         string
 	Force        bool
+	// Sample copies the preset's sample/ workspace in after the scaffold.
+	Sample bool
 	// Tails runs after a successful scaffold, under the workspace lock, so the
 	// wire and index tails see the tree the scaffold committed and nothing a
 	// concurrent writer slipped in between. The callee must use the Held
@@ -141,6 +149,9 @@ func initWorkspace(preset, path string, opt InitOptions) (*InitResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	if opt.Sample && !presets.HasSample(preset, source) {
+		return nil, errs.NoSample(preset, presets.WithSample(source))
+	}
 	target := pyPath(filepath.ToSlash(path))
 
 	// Since 0.11.0 a re-init preserves the workspace's schema, so scaffolding a
@@ -178,7 +189,11 @@ func initWorkspace(preset, path string, opt InitOptions) (*InitResult, error) {
 	createdKhub := !pathExists(khubDir)
 	var createdSingletons []singleton
 	var writtenKhub []string
+	var sampled []string
 	wsName, preserved, err := scaffold(target, khubDir, preset, merged, source, opt, &createdSingletons, &writtenKhub)
+	if err == nil && opt.Sample {
+		err = copySample(target, preset, source, &sampled)
+	}
 	if err != nil {
 		// Best-effort unwind (not full atomicity — dirs/.gitignore may remain):
 		// drop the partial .khub/ we just created, any singleton files this run
@@ -187,6 +202,9 @@ func initWorkspace(preset, path string, opt InitOptions) (*InitResult, error) {
 		// the workspace's schema exactly as it was.
 		for _, s := range createdSingletons {
 			_ = fsio.Remove(osPath(target), osPath(s.path), false)
+		}
+		for _, rel := range sampled {
+			_ = fsio.Remove(osPath(target), osPath(pyJoin(target, rel)), false)
 		}
 		cleanupInitFiles(osPath(target), osPath(khubDir), writtenKhub, createdKhub)
 		return nil, err
@@ -217,7 +235,42 @@ func initWorkspace(preset, path string, opt InitOptions) (*InitResult, error) {
 		SeededOverCorpus:    seededOverCorpus,
 		SingletonsCreated:   created,
 		Preserved:           preserved,
+		SampleCreated:       sampled,
 	}, nil
+}
+
+// copySample copies the preset's sample/ tree into target after the scaffold,
+// byte for byte: the files are entities at the paths the preset's storage
+// layer gives them, so nothing is rendered or resolved here. Creations only,
+// the rule singletons follow — a file already at a sample path is left alone.
+// Each file written is appended to created, as a slash path relative to
+// target, so the caller can list or unwind it.
+func copySample(target, preset string, source fs.FS, created *[]string) error {
+	files, err := presets.SampleFiles(preset, source)
+	if err != nil {
+		return err
+	}
+	*created = []string{}
+	for _, rel := range files {
+		dest := pyJoin(target, rel)
+		if _, err := os.Lstat(osPath(dest)); err == nil {
+			continue
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		payload, err := fs.ReadFile(source, pathpkg.Join(preset, presets.SampleDir, rel))
+		if err != nil {
+			return err
+		}
+		if err := fsio.MkdirAll(osPath(target), osPath(pyParent(dest))); err != nil {
+			return err
+		}
+		if err := fsio.WriteNewIn(osPath(target), osPath(dest), payload); err != nil {
+			return err
+		}
+		*created = append(*created, rel)
+	}
+	return nil
 }
 
 // Cleanup never recursively removes .khub: a writer may have created a stable

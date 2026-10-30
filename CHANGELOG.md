@@ -10,12 +10,13 @@ Notable changes to khub. Format follows [Keep a Changelog](https://keepachangelo
   (`status`, `get`, `query`, `search`, `neighbors`, `impact`, `history`,
   `validate`, `check`, `stale`, `schema`) against the workspace as a git commit
   holds it: a commit, branch or tag, or a date (`YYYY-MM-DD`, the last commit
-  on HEAD at or before that day, UTC). The tree is read into a scratch
-  directory and removed afterwards; the repository is never touched. Writes
-  refuse with `read_only_at`; `no_git_history` and `unknown_revision` name the
-  other refusals. (#34)
+  on HEAD at or before that day, UTC). The files a scan reads are copied into
+  a scratch directory, removed afterwards and on SIGINT/SIGTERM; the repository
+  is never touched, and a path in a message reads `<ref>:<path>`. Writes refuse
+  with `read_only_at`; `no_git_history`, `unknown_revision` and
+  `snapshot_error` name the other refusals. (#34)
 - **`--as-of <date>`** pins "today" for the `stale` flag and `khub stale`, so a
-  date-relative read is reproducible. A date `--at` implies it. (#34)
+  date-relative read is reproducible. A past date `--at` implies it. (#34)
 
 ## [0.30.0] — 2026-10-28
 

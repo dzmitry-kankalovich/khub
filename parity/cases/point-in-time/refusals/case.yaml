@@ -15,3 +15,5 @@ steps:
 - argv: ["-C", "hub", "--as-of", "2025-6-1", "status"]
 - argv: ["-C", "hub", "--at"]
 - argv: ["-C", "hub", "--at=", "status"]
+- argv: ["-C", "hub", "--at", "2026-02-30", "status"]
+- argv: ["-C", "hub", "--at", "--force", "status"]

@@ -208,6 +208,7 @@ error_codes:
 - singleton_exists
 - singleton_id
 - slug_taken
+- snapshot_error
 - strict_unknown_field
 - target_not_empty
 - template_invalid

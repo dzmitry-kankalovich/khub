@@ -35,6 +35,7 @@ var state State
 // Execute runs the CLI and returns the process exit code.
 func Execute(argv []string) int {
 	state = State{}
+	scrubbed = ""
 	root := newRoot() // registering -C resets state.Workspace to its default
 	defer closeSnapshot()
 	// Click parses the ROOT GROUP's own options itself, before the command name,
@@ -136,6 +137,10 @@ func parseGlobals(root *cobra.Command, argv []string) (rest []string, code int, 
 					_ = usageBox(root, "Invalid value for '--at': name a commit, branch or tag, or a date as YYYY-MM-DD.")
 					return nil, 2, true
 				}
+				if _, isDate, valid := gitlog.AtDate(value); isDate && !valid {
+					_ = usageBox(root, "Invalid value for '--at': '"+value+"' is not a valid date.")
+					return nil, 2, true
+				}
 				state.At = value
 				break
 			}
@@ -152,8 +157,10 @@ func parseGlobals(root *cobra.Command, argv []string) (rest []string, code int, 
 		i++
 	}
 	// A date --at reads the workspace as it stood that day, so "today" is that
-	// day too unless --as-of says otherwise.
-	if d, isDate := gitlog.AtDate(state.At); isDate && state.AsOf.IsZero() {
+	// day too unless --as-of says otherwise. A date still to come leaves the
+	// clock alone: the newest commit judged from a future day would make
+	// everything stale.
+	if d, _, valid := gitlog.AtDate(state.At); valid && state.AsOf.IsZero() && !d.After(today()) {
 		state.AsOf = d
 	}
 	return append([]string{}, argv[i:]...), 0, false

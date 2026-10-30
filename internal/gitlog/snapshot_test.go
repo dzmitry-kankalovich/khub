@@ -4,8 +4,10 @@ package gitlog
 // holds, and the refusals. The CLI surface is pinned by parity/cases/point-in-time.
 
 import (
+	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -33,6 +35,12 @@ func wantCode(t *testing.T, err error, code string) {
 
 // historyRepo is a repository whose khub workspace lives in hub/, with two
 // commits a day apart and one uncommitted change.
+// materialize runs Materialize into a fresh scratch directory.
+func materialize(t *testing.T, root, spec string) (*Snapshot, error) {
+	t.Helper()
+	return Materialize(context.Background(), root, spec, t.TempDir())
+}
+
 func historyRepo(t *testing.T) (repo, ws string) {
 	t.Helper()
 	repo = t.TempDir()
@@ -60,7 +68,7 @@ func TestResolveAt(t *testing.T) {
 		{"2026-03-02", head},
 		{"2027-01-01", head},
 	} {
-		got, err := ResolveAt(ws, tc.spec)
+		got, err := ResolveAt(context.Background(), ws, tc.spec)
 		if err != nil {
 			t.Fatalf("%s: %v", tc.spec, err)
 		}
@@ -69,14 +77,14 @@ func TestResolveAt(t *testing.T) {
 		}
 	}
 	for _, spec := range []string{"2026-02-28", "no-such-branch", "--output=x", "2026-13-45"} {
-		_, err := ResolveAt(ws, spec)
+		_, err := ResolveAt(context.Background(), ws, spec)
 		wantCode(t, err, "unknown_revision")
 	}
 }
 
 func TestMaterializeReadsTheCommitNotTheWorkingTree(t *testing.T) {
 	_, ws := historyRepo(t)
-	snap, err := Materialize(ws, "HEAD~1")
+	snap, err := materialize(t, ws, "HEAD~1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +117,7 @@ func TestMaterializeReadsTheCommitNotTheWorkingTree(t *testing.T) {
 func TestMaterializeRefusals(t *testing.T) {
 	// No git at all.
 	plain := freshWS(t)
-	_, err := Materialize(plain, "HEAD")
+	_, err := materialize(t, plain, "HEAD")
 	wantCode(t, err, "no_git_history")
 
 	// A commit from before the workspace existed.
@@ -120,9 +128,9 @@ func TestMaterializeRefusals(t *testing.T) {
 	ws := filepath.Join(repo, "hub")
 	initPreset(t, ws, "firm-ops")
 	commit(t, repo, "workspace", "2026-02-01T00:00:00Z")
-	_, err = Materialize(ws, "HEAD~1")
+	_, err = materialize(t, ws, "HEAD~1")
 	wantCode(t, err, "no_workspace")
-	snap, err := Materialize(ws, "HEAD")
+	snap, err := materialize(t, ws, "HEAD")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +145,7 @@ func TestStaleFromReadsDatesUpToTheCommit(t *testing.T) {
 	seed(t, repo, "fragments/note.md", kv{"type", "fragment"}, kv{"stage", "processed"})
 	commit(t, repo, "touch", "2026-06-01T10:00:00Z")
 
-	snap, err := Materialize(repo, "HEAD~1")
+	snap, err := materialize(t, repo, "HEAD~1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,25 +173,25 @@ func TestMaterializeKeepsModesAndSymlinks(t *testing.T) {
 	}
 	repo := freshWS(t)
 	gitInit(t, repo)
-	writeRaw(t, repo, "tools/run.sh", "#!/bin/sh\n")
-	if err := os.Chmod(filepath.Join(repo, "tools", "run.sh"), 0o755); err != nil {
+	writeRaw(t, repo, "tools/run.md", "#!/bin/sh\n")
+	if err := os.Chmod(filepath.Join(repo, "tools", "run.md"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink("run.sh", filepath.Join(repo, "tools", "link")); err != nil {
+	if err := os.Symlink("run.md", filepath.Join(repo, "tools", "link")); err != nil {
 		t.Fatal(err)
 	}
 	commit(t, repo, "seed", "2026-01-01T00:00:00Z")
-	snap, err := Materialize(repo, "HEAD")
+	snap, err := materialize(t, repo, "HEAD")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = snap.Close() }()
-	info, err := os.Stat(filepath.Join(snap.Root, "tools", "run.sh"))
+	info, err := os.Stat(filepath.Join(snap.Root, "tools", "run.md"))
 	if err != nil || info.Mode().Perm()&0o100 == 0 {
-		t.Fatalf("run.sh lost its executable bit: %v %v", info, err)
+		t.Fatalf("run.md lost its executable bit: %v %v", info, err)
 	}
 	target, err := os.Readlink(filepath.Join(snap.Root, "tools", "link"))
-	if err != nil || target != "run.sh" {
+	if err != nil || target != "run.md" {
 		t.Fatalf("link: %q %v", target, err)
 	}
 }
@@ -192,10 +200,141 @@ func TestSafeTreePath(t *testing.T) {
 	for p, want := range map[string]bool{
 		"a/b.md": true, ".khub/ontology.yaml": true, "a..b/c": true,
 		"": false, "/etc/passwd": false, "../x": false, "a/../b": false,
-		"a//b": false, "./a": false, ".git/config": false, "a/.GIT/x": false, `a\b`: false,
+		"a//b": false, "./a": false, ".git/config": false, "a/.GIT/x": false,
 	} {
-		if got := safeTreePath(p); got != want {
-			t.Fatalf("safeTreePath(%q) = %v, want %v", p, got, want)
+		for _, windows := range []bool{false, true} {
+			if got := safeTreePath(p, windows); got != want {
+				t.Fatalf("safeTreePath(%q, %v) = %v, want %v", p, windows, got, want)
+			}
 		}
 	}
+	// A backslash is a filename character on unix and a separator on Windows.
+	if !safeTreePath(`notes\back.md`, false) || safeTreePath(`notes\back.md`, true) {
+		t.Fatal("backslash: want legal on unix, refused on Windows")
+	}
+}
+
+// stage records path with content in the index without touching the working
+// tree, so a test can commit a tree no checkout on this filesystem could hold.
+func stage(t *testing.T, root, relpath, content string) {
+	t.Helper()
+	cmd := exec.Command("git", "-C", root, "hash-object", "-w", "--stdin")
+	cmd.Stdin = strings.NewReader(content)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "", "update-index", "--add", "--cacheinfo", "100644,"+strings.TrimSpace(string(out))+","+relpath)
+}
+
+func TestMaterializeCopiesOnlyWhatAScanReads(t *testing.T) {
+	seedRepo := func(t *testing.T, policy string) string {
+		repo := freshWS(t)
+		gitInit(t, repo)
+		if policy != "" {
+			writeRaw(t, repo, ".khub/policy.yaml", policy)
+		}
+		writeRaw(t, repo, ".khub/ignore", "examples/\n")
+		writeRaw(t, repo, "examples/sample.md", "---\ntype: fragment\n---\n")
+		writeRaw(t, repo, "tools/main.go", "package main\n")
+		writeRaw(t, repo, "notes/keep.md", "kept\n")
+		commit(t, repo, "seed", "2026-01-01T00:00:00Z")
+		return repo
+	}
+	read := func(root, rel string) (string, bool) {
+		got, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		return string(got), err == nil
+	}
+
+	// No relation names a file by path: only what a scan opens is there.
+	snap, err := materialize(t, seedRepo(t, ""), "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := read(snap.Root, "notes/keep.md"); !ok || got != "kept\n" {
+		t.Fatalf("keep.md: %q", got)
+	}
+	if got, ok := read(snap.Root, ".khub/ignore"); !ok || got != "examples/\n" {
+		t.Fatalf(".khub/ignore: %q", got)
+	}
+	for _, rel := range []string{"tools/main.go", "examples/sample.md"} {
+		if _, ok := read(snap.Root, rel); ok {
+			t.Fatalf("%s should be left out", rel)
+		}
+	}
+
+	// path_refs: every other file exists, empty, so a path reference resolves.
+	snap, err = materialize(t, seedRepo(t, "policy:\n  opportunity: {path_refs: true}\n"), "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{"tools/main.go", "examples/sample.md"} {
+		if got, ok := read(snap.Root, rel); !ok || got != "" {
+			t.Fatalf("%s: want an empty placeholder, got %q (exists %v)", rel, got, ok)
+		}
+	}
+}
+
+func TestMaterializeBackslashPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a backslash is a separator on Windows")
+	}
+	repo := freshWS(t)
+	gitInit(t, repo)
+	writeRaw(t, repo, `notes\back.md`, "x\n")
+	commit(t, repo, "seed", "2026-01-01T00:00:00Z")
+	snap, err := materialize(t, repo, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(snap.Root, `notes\back.md`)); err != nil || string(got) != "x\n" {
+		t.Fatalf("backslash file: %q %v", got, err)
+	}
+}
+
+func TestMaterializeMissingBlob(t *testing.T) {
+	repo := freshWS(t)
+	gitInit(t, repo)
+	writeRaw(t, repo, "notes/gone.md", "soon missing\n")
+	commit(t, repo, "seed", "2026-01-01T00:00:00Z")
+	oid := revParse(t, repo, "HEAD:notes/gone.md")
+	loose := filepath.Join(repo, ".git", "objects", oid[:2], oid[2:])
+	if err := os.Rename(loose, filepath.Join(repo, ".git", "moved-object")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := materialize(t, repo, "HEAD")
+	wantCode(t, err, "snapshot_error")
+}
+
+func TestMaterializeCaseFoldedPaths(t *testing.T) {
+	repo := freshWS(t)
+	gitInit(t, repo)
+	git(t, repo, "", "add", "-A")
+	stage(t, repo, "notes/Twin.md", "upper\n")
+	stage(t, repo, "notes/twin.md", "lower\n")
+	git(t, repo, "2026-01-01T00:00:00Z", "commit", "-m", "twins")
+	probe := t.TempDir()
+	writeRaw(t, probe, "x", "")
+	_, statErr := os.Stat(filepath.Join(probe, "X"))
+	folds := statErr == nil
+
+	_, err := materialize(t, repo, "HEAD")
+	if folds {
+		wantCode(t, err, "snapshot_error")
+	} else if err != nil {
+		t.Fatalf("a case-sensitive filesystem holds both: %v", err)
+	}
+}
+
+func TestResolveAtUnbornHeadNamesAnotherBranch(t *testing.T) {
+	repo := freshWS(t)
+	gitInit(t, repo)
+	commit(t, repo, "seed", "2026-01-01T00:00:00Z")
+	git(t, repo, "", "branch", "kept")
+	git(t, repo, "", "checkout", "-q", "--orphan", "fresh")
+	if _, err := ResolveAt(context.Background(), repo, "kept"); err != nil {
+		t.Fatalf("a branch resolves under an unborn HEAD: %v", err)
+	}
+	_, err := ResolveAt(context.Background(), repo, "2026-01-01")
+	wantCode(t, err, "no_git_history")
 }

@@ -516,3 +516,14 @@ func ReadOnlyAt(command string) *Located {
 		Target: command,
 	}
 }
+
+// SnapshotError is `snapshot_error`: the commit `--at` names could not be
+// read into a snapshot — a path this filesystem cannot hold, content the
+// repository lacks, or git answering in a shape khub does not expect.
+func SnapshotError(spec, detail string) *Located {
+	return &Located{
+		Code:    "snapshot_error",
+		Message: fmt.Sprintf("Cannot read the workspace at '%s': %s", spec, detail),
+		Target:  spec,
+	}
+}

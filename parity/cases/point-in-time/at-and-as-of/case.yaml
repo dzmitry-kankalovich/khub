@@ -21,3 +21,5 @@ steps:
 - argv: ["--at", "HEAD~1", "get", "req-old", "--format", "raw"]
 - argv: ["--at", "HEAD", "check"]
 - argv: ["--at", "HEAD", "schema", "types"]
+# A date still to come leaves the clock alone: ages count to 2026-01-15.
+- argv: ["--at", "2099-01-01", "stale", "--days", "10"]

@@ -21,6 +21,7 @@ commands:
   - '--dry-run'
   - '--no-schema'
   - '--no-wire'
+  - '--unlock'
   - '--format'
 - name: 'status'
   params:
@@ -182,6 +183,7 @@ error_codes:
 - inbound_edge_refusal
 - invalid_schema
 - invalid_snapshot
+- locked_removed
 - invalid_slug
 - lookup_error
 - malformed_entity

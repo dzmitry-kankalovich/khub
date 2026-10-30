@@ -132,6 +132,23 @@ func NoWorkspace() *Located {
 	return &Located{Code: "no_workspace", Message: "No .khub workspace found. Run khub init <preset>"}
 }
 
+// LockedRemoved is `locked_removed`: an upgrade whose new schema drops a type
+// or predicate the current schema locks. names are the elements still locked
+// after --unlock, `type` or `type.predicate`; the message spells the flags
+// that let the removal through.
+func LockedRemoved(names []string) *Located {
+	flags := make([]string, len(names))
+	for i, n := range names {
+		flags[i] = "--unlock " + n
+	}
+	return &Located{
+		Code: "locked_removed",
+		Message: fmt.Sprintf("Upgrade would remove locked schema elements: %s. Nothing was written; "+
+			"pass %s to remove them anyway", strings.Join(names, ", "), strings.Join(flags, " ")),
+		Target: names[0],
+	}
+}
+
 // NoPreset is the upgrade guard: a workspace whose config.yaml records no
 // preset has nothing to refresh from. Without it an upgrade would have to
 // guess which shipped preset to lay over the workspace's own schema.

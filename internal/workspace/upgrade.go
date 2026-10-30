@@ -40,6 +40,9 @@ type UpgradeOptions struct {
 	DryRun   bool
 	// Preview runs dry-run tails against the prepared temporary workspace.
 	Preview func(string) error
+	// Unlock names the locked elements this run may remove: a type by name,
+	// a predicate as `type.predicate`. A name that unlocks nothing is inert.
+	Unlock []string
 	// Tails runs after a real upgrade has published, still under the workspace
 	// lock, so the wire and index tails see exactly the tree the core
 	// committed. The callee must use the Held variants (wire.WireHeld,
@@ -78,6 +81,34 @@ type UpgradeResult struct {
 	SchemaDrift  []string
 	DryRun       bool
 	RemovedTypes []string
+}
+
+// lockedRemovals lists what the current schema locks and the candidate drops,
+// minus the unlocked names, in the current schema's declaration order: each
+// type, then its locked predicates. A predicate goes with its type, so a
+// removed type's locked predicates need their own unlock — every locked
+// element a migration removes is named, never implied.
+func lockedRemovals(old, next *schema.ResolvedSchema, unlock []string) []string {
+	unlocked := map[string]bool{}
+	for _, n := range unlock {
+		unlocked[n] = true
+	}
+	out := []string{}
+	for _, name := range old.Types.Keys() {
+		ot, _ := old.Types.Get(name)
+		nt, kept := next.Types.Get(name)
+		if ot.Locked && !kept && !unlocked[name] {
+			out = append(out, name)
+		}
+		for _, pred := range ot.LockedRelations {
+			qualified := name + "." + pred
+			if kept && nt.Relations.Has(pred) || unlocked[qualified] {
+				continue
+			}
+			out = append(out, qualified)
+		}
+	}
+	return out
 }
 
 // Upgrade brings the workspace at root up to the preset the binary ships:

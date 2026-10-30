@@ -92,6 +92,11 @@ func prepareUpgrade(root string, opt UpgradeOptions) (*UpgradeResult, error) {
 				result.RemovedTypes = append(result.RemovedTypes, name)
 			}
 		}
+		// Refused before anything is published, and on a dry run too: the
+		// preview answers what the real run would.
+		if locked := lockedRemovals(old, resolved, opt.Unlock); len(locked) > 0 {
+			return nil, errs.LockedRemoved(locked)
+		}
 	}
 	writes, newDirs, err := upgradeDiff(candidate, before, dirs)
 	if err != nil {

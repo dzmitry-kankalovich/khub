@@ -1,0 +1,18 @@
+# Policy `locked` and `locked_relations` hold load-bearing schema elements
+# across an upgrade. The workspace adds a locked type (ritual) and a locked
+# predicate on a shipped type (repo.mirrors); the shipped preset has neither,
+# so upgrade refuses (locked_removed, exit 2, nothing written) — on a dry run
+# too — naming every locked element still in the way and the --unlock flags
+# that let it through. Unlocking both upgrades and reports ritual removed.
+# A locked_relations name the type does not declare is a schema_error; an
+# unloadable current schema carries no locks, so upgrade repairs it.
+steps:
+- argv: ["init", "build-hub", ".", "--no-wire"]
+- sh: "printf '      relations:\\n        mirrors: { to: repo, many: true }\\n    ritual:\\n      when: a team ritual is set up\\n' >> .khub/ontology.yaml && printf '  repo: { locked_relations: [mirrors] }\\n  ritual: { locked: true }\\n' >> .khub/policy.yaml"
+- argv: ["upgrade", "--dry-run", "--format", "json"]
+- argv: ["upgrade"]
+- argv: ["upgrade", "--unlock", "ritual", "--format", "json"]
+- argv: ["upgrade", "--unlock", "ritual", "--unlock", "repo.mirrors", "--no-wire", "--format", "json"]
+- sh: "printf '  api: { locked_relations: [consumers] }\\n' >> .khub/policy.yaml"
+- argv: ["schema", "types"]
+- argv: ["upgrade", "--no-wire", "--format", "json"]

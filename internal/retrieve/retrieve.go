@@ -107,26 +107,43 @@ type Record struct {
 	View   *entity.EntityView
 }
 
-// Omitted is what the caps left out: a count per cap, the first ids trimmed
-// (at most MaxOmittedIDs, in trim order: the seeds Limit dropped, then
-// MaxEntities, then MaxBytes), and whether a seed itself had to go.
+// Omitted is what the caps left out: a count per cap, every id each cap
+// dropped in trim order, and whether a seed itself had to go. IDs is the
+// bounded list the document names.
 type Omitted struct {
-	Limit        int
-	MaxEntities  int
-	MaxBytes     int
-	IDs          []string
-	Insufficient bool
+	Limit          int
+	MaxEntities    int
+	MaxBytes       int
+	LimitIDs       []string // the seeds Limit dropped, in relevance or argument order
+	MaxEntitiesIDs []string // in trim order
+	MaxBytesIDs    []string // in trim order
+	Insufficient   bool
+
+	// shrunk is how many fewer than MaxOmittedIDs the document names, raised
+	// by trimBytes only when the records are gone and the envelope itself is
+	// over the cap. The zero value names the full MaxOmittedIDs.
+	shrunk int
 }
 
 // Truncated reports whether any cap dropped an entity.
 func (o Omitted) Truncated() bool { return o.Limit > 0 || o.MaxEntities > 0 || o.MaxBytes > 0 }
 
-func (o *Omitted) note(ids ...string) {
-	for _, id := range ids {
-		if len(o.IDs) < MaxOmittedIDs {
-			o.IDs = append(o.IDs, id)
+// IDs is the bounded list the document names: at most MaxOmittedIDs, the
+// cap-trimmed ids first (MaxEntities, then MaxBytes — what an agent cannot
+// recover with another call), then what Limit dropped (which `search` or the
+// agent's own id list can name again) while room remains.
+func (o Omitted) IDs() []string {
+	room := max(MaxOmittedIDs-o.shrunk, 0)
+	out := make([]string, 0, min(room, len(o.MaxEntitiesIDs)+len(o.MaxBytesIDs)+len(o.LimitIDs)))
+	for _, list := range [][]string{o.MaxEntitiesIDs, o.MaxBytesIDs, o.LimitIDs} {
+		for _, id := range list {
+			if len(out) == room {
+				return out
+			}
+			out = append(out, id)
 		}
 	}
+	return out
 }
 
 // Result is one retrieval: the records in output order — seeds first, in
@@ -138,6 +155,7 @@ type Result struct {
 	Omitted Omitted
 	Search  *search.Result
 	Body    bool // the records carry bodies
+	Seeds   int  // seeds after Limit, before the caps
 
 	total int // trimBytes: the summed standalone size of Records
 }
@@ -181,6 +199,7 @@ func Retrieve(root string, opts Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	res.Seeds = len(seeds)
 	records := expand(g, seeds, opts)
 	for i := range records {
 		annotate(&records[i], idx, g, opts.Now, staleDays)
@@ -192,7 +211,7 @@ func Retrieve(root string, opts Options) (*Result, error) {
 	order := trimOrder(records)
 	if opts.MaxEntities > 0 && len(records) > opts.MaxEntities {
 		drop := order[:len(records)-opts.MaxEntities]
-		records = trim(records, drop, &res.Omitted, &res.Omitted.MaxEntities)
+		records = trim(records, drop, &res.Omitted)
 		order = trimOrder(records)
 	}
 	for i := range records {
@@ -232,7 +251,7 @@ func seedsOf(root string, idx *index.Index, opts Options, res *Result) ([]Record
 			node := index.Node{Type: h.Type, Slug: h.Slug}
 			if i >= limit {
 				res.Omitted.Limit++
-				res.Omitted.note(node.ID())
+				res.Omitted.LimitIDs = append(res.Omitted.LimitIDs, node.ID())
 				continue
 			}
 			seen[node] = true
@@ -259,7 +278,7 @@ func seedsOf(root string, idx *index.Index, opts Options, res *Result) ([]Record
 		cut := max(*opts.Limit, 0)
 		for _, r := range seeds[cut:] {
 			res.Omitted.Limit++
-			res.Omitted.note(r.Node.ID())
+			res.Omitted.LimitIDs = append(res.Omitted.LimitIDs, r.Node.ID())
 		}
 		seeds = seeds[:cut]
 	}
@@ -356,15 +375,15 @@ func trimOrder(records []Record) []int {
 }
 
 // trim drops the records at the given indices, keeping the others in output
-// order, and books each drop against the cap's count.
-func trim(records []Record, drop []int, omitted *Omitted, count *int) []Record {
+// order, and books each drop against MaxEntities.
+func trim(records []Record, drop []int, omitted *Omitted) []Record {
 	gone := map[int]bool{}
 	for _, i := range drop {
 		gone[i] = true
 	}
 	for _, i := range drop {
-		*count++
-		omitted.note(records[i].Node.ID())
+		omitted.MaxEntities++
+		omitted.MaxEntitiesIDs = append(omitted.MaxEntitiesIDs, records[i].Node.ID())
 		if records[i].Reason.Depth == 0 {
 			omitted.Insufficient = true
 		}
@@ -384,8 +403,13 @@ func trim(records []Record, drop []int, omitted *Omitted, count *int) []Record {
 // is exact arithmetic over one encoding per record plus one of the envelope,
 // never a re-encoding of the whole document per drop. The encoder has the
 // last word: the candidate is encoded once to confirm, and one more record
-// goes if the arithmetic ever disagrees with it. When even the empty
-// document is over budget, everything goes and the result says so.
+// goes if the arithmetic ever disagrees with it.
+//
+// The envelope has a floor. Once every record is gone it still carries the
+// omitted ids, so those are shrunk from the tail until the document fits;
+// with none left it is the irreducible floor — `count: 0`, `entities: []`
+// and `omitted` with `ids: []`, under 150 bytes — and a cap below that is
+// answered with the floor itself, every count still exact.
 func trimBytes(res *Result, order []int, limit int) error {
 	all := res.Records
 	sizes := make([]int, len(all))
@@ -418,6 +442,16 @@ func trimBytes(res *Result, order []int, limit int) error {
 		}
 		k++
 	}
+	for len(trial.Records) == 0 && trial.Omitted.shrunk < MaxOmittedIDs {
+		doc, err := canon.EncodeCLI(Render(trial))
+		if err != nil {
+			return err
+		}
+		if len(doc)+1 <= limit {
+			break
+		}
+		trial.Omitted.shrunk++
+	}
 	res.Records = trial.Records
 	res.Omitted = trial.Omitted
 	return nil
@@ -426,13 +460,13 @@ func trimBytes(res *Result, order []int, limit int) error {
 // trimmed is res with the records at drop taken out and booked against
 // MaxBytes, plus the summed standalone size of what is kept.
 func trimmed(res *Result, drop []int, sizes []int) *Result {
-	out := &Result{Omitted: res.Omitted, Search: res.Search, Body: res.Body}
-	out.Omitted.IDs = append([]string(nil), res.Omitted.IDs...)
+	out := &Result{Omitted: res.Omitted, Search: res.Search, Body: res.Body, Seeds: res.Seeds}
+	out.Omitted.MaxBytesIDs = append([]string(nil), res.Omitted.MaxBytesIDs...)
 	gone := map[int]bool{}
 	for _, i := range drop {
 		gone[i] = true
 		out.Omitted.MaxBytes++
-		out.Omitted.note(res.Records[i].Node.ID())
+		out.Omitted.MaxBytesIDs = append(out.Omitted.MaxBytesIDs, res.Records[i].Node.ID())
 		if res.Records[i].Reason.Depth == 0 {
 			out.Omitted.Insufficient = true
 		}
@@ -449,12 +483,10 @@ func trimmed(res *Result, drop []int, sizes []int) *Result {
 
 // documentSize is the byte count of the printed document (newline included)
 // for a trial whose records encode to total bytes in all: the envelope with
-// an empty list, plus the items and their ", " separators.
+// the real count and an empty list, plus the items and their ", " separators.
 func documentSize(trial *Result, total int) (int, error) {
 	n := len(trial.Records)
-	empty := *trial
-	empty.Records = nil
-	env, err := canon.EncodeCLI(Render(&empty))
+	env, err := canon.EncodeCLI(renderDocument(trial, n, []any{}))
 	if err != nil {
 		return 0, err
 	}

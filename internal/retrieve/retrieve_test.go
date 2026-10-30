@@ -33,13 +33,13 @@ func TestSearchSeedsRankedAndLimited(t *testing.T) {
 	if !eqSlices(ids(two), ids(all)[:2]) {
 		t.Fatalf("the limit keeps the best-ranked: want %v, got %v", ids(all)[:2], ids(two))
 	}
-	if two.Omitted.Limit != 1 || !eqSlices(two.Omitted.IDs, ids(all)[2:]) || !two.Omitted.Truncated() {
+	if two.Omitted.Limit != 1 || !eqSlices(two.Omitted.IDs(), ids(all)[2:]) || !two.Omitted.Truncated() {
 		t.Fatalf("the dropped hit is counted and named: %+v", two.Omitted)
 	}
 	if two.Omitted.Insufficient {
 		t.Fatal("a limit is what the caller asked for, never an insufficiency")
 	}
-	if two.Search == nil || two.Search.Total != 3 || len(two.Search.Hits) != 2 {
+	if two.Search == nil || two.Search.Total != 3 || len(two.Search.Hits) != 2 || two.Seeds != 2 {
 		t.Fatalf("the search result reports every hit and the seeds kept: %+v", two.Search)
 	}
 }
@@ -60,8 +60,8 @@ func TestIDSeedsInArgumentOrder(t *testing.T) {
 		t.Fatal("no search ran")
 	}
 	cut := mustRetrieve(t, ws, Options{IDs: []string{"web", "auth", "jwt"}, Depth: 0, Limit: ptr(1)})
-	if !eqSlices(ids(cut), []string{"part/web"}) || cut.Omitted.Limit != 2 ||
-		!eqSlices(cut.Omitted.IDs, []string{"need/auth", "note/jwt"}) {
+	if !eqSlices(ids(cut), []string{"part/web"}) || cut.Omitted.Limit != 2 || cut.Seeds != 1 ||
+		!eqSlices(cut.Omitted.IDs(), []string{"need/auth", "note/jwt"}) {
 		t.Fatalf("the limit cuts the ids from the end: %v %+v", ids(cut), cut.Omitted)
 	}
 }
@@ -188,7 +188,7 @@ func TestMaxEntitiesTrimsPeripheryFirst(t *testing.T) {
 	if want := []string{"need/auth", "part/api", "note/jwt"}; !eqSlices(ids(res), want) {
 		t.Fatalf("want %v, got %v", want, ids(res))
 	}
-	if res.Omitted.MaxEntities != 2 || !eqSlices(res.Omitted.IDs, []string{"part/web", "part/db"}) {
+	if res.Omitted.MaxEntities != 2 || !eqSlices(res.Omitted.IDs(), []string{"part/web", "part/db"}) {
 		t.Fatalf("part/web goes before part/db: %+v", res.Omitted)
 	}
 	if res.Omitted.Insufficient || !res.Omitted.Truncated() {
@@ -203,7 +203,7 @@ func TestCapBelowSeedsIsInsufficient(t *testing.T) {
 	if want := []string{"part/web", "need/auth"}; !eqSlices(ids(res), want) {
 		t.Fatalf("want the first two seeds, got %v", ids(res))
 	}
-	if !res.Omitted.Insufficient || res.Omitted.IDs[len(res.Omitted.IDs)-1] != "note/jwt" {
+	if named := res.Omitted.IDs(); !res.Omitted.Insufficient || named[len(named)-1] != "note/jwt" {
 		t.Fatalf("the last seed is the last to go, and it is an insufficiency: %+v", res.Omitted)
 	}
 }
@@ -217,11 +217,25 @@ func TestMaxBytesHoldsTheDocument(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, limit := range []int{len(fullDoc) + 1, len(fullDoc), len(fullDoc) - 200, 900, 500, 200} {
+	// The irreducible floor: every record and every omitted id gone.
+	floor := &Result{Omitted: Omitted{MaxBytes: len(full.Records), Insufficient: true}}
+	floorDoc, err := canon.EncodeCLI(Render(floor))
+	if err != nil {
+		t.Fatal(err)
+	}
+	floorSize := len(floorDoc) + 1
+	for _, limit := range []int{len(fullDoc) + 1, len(fullDoc), len(fullDoc) - 200, 900, 500, 200, floorSize, floorSize - 1, 1} {
 		res := mustRetrieve(t, ws, Options{IDs: []string{"auth"}, Depth: 2, MaxBytes: limit})
 		doc, err := canon.EncodeCLI(Render(res))
 		if err != nil {
 			t.Fatal(err)
+		}
+		if limit < floorSize {
+			// Below the floor the answer is the floor itself: nothing more can go.
+			if len(doc)+1 != floorSize || len(res.Records) != 0 || len(res.Omitted.IDs()) != 0 {
+				t.Fatalf("limit %d: want the %d-byte floor, got %d bytes %v", limit, floorSize, len(doc)+1, res.Omitted.IDs())
+			}
+			continue
 		}
 		if len(doc)+1 > limit {
 			t.Fatalf("limit %d: the document is %d bytes", limit, len(doc)+1)
@@ -271,6 +285,50 @@ func TestNoBodyFitsMore(t *testing.T) {
 	}
 }
 
+// A cap between the floor and the envelope with every omitted id shrinks the
+// id list from the tail, so the document still fits and the counts stay.
+func TestMaxBytesShrinksOmittedIDs(t *testing.T) {
+	ws := graphWS(t)
+	gone := mustRetrieve(t, ws, Options{IDs: []string{"auth"}, Depth: 2, MaxBytes: 1})
+	floorDoc, err := canon.EncodeCLI(Render(gone))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Room for the floor plus two ids and a little, not for all five.
+	limit := len(floorDoc) + 1 + 2*len(`"part/web", `) + 4
+	res := mustRetrieve(t, ws, Options{IDs: []string{"auth"}, Depth: 2, MaxBytes: limit})
+	doc, err := canon.EncodeCLI(Render(res))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc)+1 > limit || len(res.Records) != 0 || res.Omitted.MaxBytes != 5 {
+		t.Fatalf("limit %d: %d bytes, %d records, %+v", limit, len(doc)+1, len(res.Records), res.Omitted)
+	}
+	named := res.Omitted.IDs()
+	if len(named) == 0 || len(named) >= 5 || !eqSlices(named, res.Omitted.MaxBytesIDs[:len(named)]) {
+		t.Fatalf("the list shrinks from the tail: %v of %v", named, res.Omitted.MaxBytesIDs)
+	}
+}
+
+// The omitted id budget goes to what the caps trimmed first — MaxEntities,
+// then MaxBytes — and to what Limit dropped only while room remains.
+func TestOmittedIDsNameCapTrimsFirst(t *testing.T) {
+	ws := wsFromSchema(t, preset)
+	for i := 0; i < MaxOmittedIDs+5; i++ {
+		seed(t, ws, "parts/p"+string(rune('a'+i/26))+string(rune('a'+i%26))+".md", "token\n",
+			kv{"type", "part"}, kv{"title", "Part"}, kv{"depends_on", []any{"hub"}})
+	}
+	seed(t, ws, "parts/hub.md", "the hub\n", kv{"type", "part"}, kv{"title", "Hub"})
+	res := mustRetrieve(t, ws, Options{Text: "token", Depth: 1, Limit: ptr(2), MaxEntities: 2})
+	if res.Omitted.Limit != MaxOmittedIDs+3 || res.Omitted.MaxEntities != 1 {
+		t.Fatalf("fixture: %+v", res.Omitted)
+	}
+	named := res.Omitted.IDs()
+	if len(named) != MaxOmittedIDs || named[0] != "part/hub" || !eqSlices(named[1:], res.Omitted.LimitIDs[:MaxOmittedIDs-1]) {
+		t.Fatalf("the trimmed neighbour is named first, then the dropped hits: %v", named)
+	}
+}
+
 // The omitted id list is bounded; the counts are not.
 func TestOmittedIDsAreBounded(t *testing.T) {
 	ws := wsFromSchema(t, preset)
@@ -279,7 +337,7 @@ func TestOmittedIDsAreBounded(t *testing.T) {
 			kv{"type", "part"}, kv{"title", "Part"})
 	}
 	res := mustRetrieve(t, ws, Options{Text: "token", Depth: 0, Limit: ptr(0)})
-	if res.Omitted.Limit != MaxOmittedIDs+10 || len(res.Omitted.IDs) != MaxOmittedIDs {
+	if res.Omitted.Limit != MaxOmittedIDs+10 || len(res.Omitted.IDs()) != MaxOmittedIDs {
 		t.Fatalf("want %d counted and %d named, got %+v", MaxOmittedIDs+10, MaxOmittedIDs, res.Omitted)
 	}
 }

@@ -17,8 +17,14 @@ func Render(res *Result) *omap.Map {
 	for _, r := range res.Records {
 		entities = append(entities, renderRecord(r, res.Body))
 	}
+	return renderDocument(res, len(res.Records), entities)
+}
+
+// renderDocument is the envelope around already rendered entities; the byte
+// cap measures it with the real count and an empty list.
+func renderDocument(res *Result, count int, entities []any) *omap.Map {
 	doc := omap.New()
-	doc.Set("count", len(res.Records))
+	doc.Set("count", count)
 	doc.Set("entities", entities)
 	doc.Set("omitted", renderOmitted(res.Omitted))
 	return doc
@@ -74,8 +80,9 @@ func renderReason(reason Reason) *omap.Map {
 }
 
 func renderOmitted(o Omitted) *omap.Map {
-	ids := make([]any, 0, len(o.IDs))
-	for _, id := range o.IDs {
+	named := o.IDs()
+	ids := make([]any, 0, len(named))
+	for _, id := range named {
 		ids = append(ids, id)
 	}
 	m := omap.New()

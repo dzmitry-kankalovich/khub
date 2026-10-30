@@ -10,9 +10,11 @@
 # depth, --out and --no-body; --max-entities trimming the deepest first
 # (then the greatest (type, slug)); --max-bytes holding the printed document
 # under the cap, and a cap too small for the seeds reporting insufficiency at
-# exit 0; the `note:` line for seeds the limit dropped; a search with no hit;
-# and the three refusals: an unknown predicate (listing the declared ones),
-# no seed at all, and text with --id (a usage error).
+# exit 0; the `note:` line for seeds the limit dropped (hits, and ids); a
+# search with no hit; the refusals: an unknown predicate (listing the
+# declared ones), no seed at all, text with --id and --type with --id (usage
+# errors); and the byte floor: a cap below the envelope shrinks the omitted
+# id list, and one below the irreducible document gets that document.
 steps:
 - argv: ["init", "build-hub", ".", "--no-wire"]
 - argv: ["add", "requirement", "--title", "Auth required", "--kind", "functional"]
@@ -36,3 +38,7 @@ steps:
 - argv: ["retrieve"]
 - argv: ["retrieve", "auth", "--id", "cmp-api"]
 - argv: ["retrieve", "auth", "--expand", "depends_on:x"]
+- argv: ["retrieve", "--id", "cmp-api", "--id", "cmp-web", "--limit", "1", "--depth", "0", "--no-body"]
+- argv: ["retrieve", "--id", "cmp-api", "--type", "component"]
+- argv: ["retrieve", "auth", "--max-bytes", "170", "--no-body"]
+- argv: ["retrieve", "auth", "--max-bytes", "100", "--no-body"]

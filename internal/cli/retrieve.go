@@ -36,6 +36,9 @@ func registerRetrieve(root *cobra.Command) {
 			if text != "" && len(ids) > 0 {
 				return badParameter(cmd.CommandPath(), argSpec, "Pass search text or --id, not both")
 			}
+			if len(ids) > 0 && (cmd.Flags().Changed("type") || plain) {
+				return badParameter(cmd.CommandPath(), argSpec, "--type and --plain shape a search; they do not apply to --id seeds")
+			}
 			if depth < 0 {
 				return badParameter(cmd.CommandPath(), argSpec, "--depth must be 0 or more")
 			}
@@ -138,6 +141,9 @@ func retrieveNote(res *retrieve.Result, plain bool) string {
 		}
 	}
 	o := res.Omitted
+	if res.Search == nil && o.Limit > 0 {
+		parts = append(parts, fmt.Sprintf("%d of %d ids dropped by --limit", o.Limit, res.Seeds+o.Limit))
+	}
 	if o.MaxEntities > 0 {
 		parts = append(parts, fmt.Sprintf("%d entities trimmed by --max-entities", o.MaxEntities))
 	}

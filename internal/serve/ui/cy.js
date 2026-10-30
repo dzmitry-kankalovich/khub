@@ -111,6 +111,14 @@ export function runLayout(spec) {
     opts.name = 'circle';
     opts.spacingFactor = 1.1;
     opts.avoidOverlap = true;
+  } else if (spec.name === 'both') {
+    // Layered, with the type boxes as the roots: every entity hangs one
+    // instance-of edge below its type, which is what puts the classes above
+    // the objects that realize them.
+    opts.name = 'breadthfirst';
+    opts.roots = eles.nodes('.sch');
+    opts.avoidOverlap = true;
+    opts.spacingFactor = 1.2;
   } else if (spec.name === 'grid') {
     opts.avoidOverlap = true;
     opts.condense = false;
@@ -301,6 +309,16 @@ export function buildStyle(types, colors, ink) {
       }
     },
     { selector: 'edge.sch.required', style: { 'line-style': 'solid' } },
+    // The combined view's realization edge, entity to type: UML's dotted line,
+    // faint, because there is one per entity and the declared relations above
+    // are the structure worth reading.
+    {
+      selector: 'edge.sch.instof',
+      style: {
+        'line-style': 'dotted', 'curve-style': 'straight', 'opacity': 0.3,
+        'target-arrow-shape': 'triangle-backcurve', 'label': ''
+      }
+    },
     // A derived inverse is real ontology — khub computes it at read time from
     // the forward edge — so it is drawn, but distinctly: nobody authors it.
     { selector: 'edge.sch.derived', style: { 'line-style': 'dotted', 'target-arrow-shape': 'vee' } },

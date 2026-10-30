@@ -10,7 +10,7 @@ import * as gfx from './cy.js';
 import * as panels from './panels.js';
 import { initial, reduce, diff } from './state.js';
 import { buildModel, indexSchema, computeVisible, legalTargetTypes, typeOf,
-         buildSchemaGraph, usedEdgeCounts } from './model.js';
+         buildSchemaGraph, buildBothGraph, usedEdgeCounts, aspectView } from './model.js';
 import { el, fill, text } from './dom.js';
 
 var state, model, schema, colors, ink, typeOrder;
@@ -72,6 +72,10 @@ function render(changed) {
   // about through it.
   var asSchema = state.view === 'schema';
   var asList = !asSchema && state.view === 'list';
+  // The combined view is the graph view plus an overlay: the same focus,
+  // depth and filters decide which entities show, and their types are boxed
+  // above them.
+  var asBoth = state.view === 'both';
   var moved = changed.focus || changed.depth || changed.filters || changed.view;
 
   // A view switch changes which population is on the canvas, and lastLayout is
@@ -96,12 +100,19 @@ function render(changed) {
   }
 
   if (!asSchema && !asList && moved) {
-    // No synthetic elements in the instance graph any more — the ontology is
-    // where the type level lives.
-    gfx.setOverlay(null);
+    // The graph view draws no synthetic elements — the ontology is where the
+    // type level lives. The combined view is the one that adds them.
     var ids = new Set();
     visible.nodes.forEach(function (id) { ids.add(id); });
     visible.edges.forEach(function (id) { ids.add(id); });
+    if (asBoth) {
+      var both = buildBothGraph(
+        buildSchemaGraph(schema, schemaEdges, state.hiddenPredicates, usedEdgeCounts(model), model.byType),
+        Array.from(visible.nodes));
+      gfx.setOverlay(both).forEach(function (id) { ids.add(id); });
+    } else {
+      gfx.setOverlay(null);
+    }
 
     gfx.setLevelClass(visible.level);
     gfx.showOnly(ids);
@@ -111,7 +122,13 @@ function render(changed) {
     // exception is a change of layout ALGORITHM: un-hiding a predicate can turn
     // an edgeless set into a connected one, and a grid laid out for no edges is
     // the wrong shape for a graph that now has a hundred.
-    if (changed.focus || changed.depth || changed.view ||
+    //
+    // The combined view always relayouts: its overlay was just rebuilt, and a
+    // freshly added type box has no position until a layout gives it one.
+    if (asBoth) {
+      lastLayout = 'both';
+      gfx.runLayout({ name: 'both' });
+    } else if (changed.focus || changed.depth || changed.view ||
         visible.layout.name !== lastLayout) {
       lastLayout = visible.layout.name;
       gfx.runLayout(visible.layout);
@@ -148,10 +165,11 @@ function render(changed) {
   }
   if (changed.notice) renderNotice();
   if (changed.focus || changed.view) {
-    // All three are always available now — they are peers over one workspace,
+    // All four are always available now — they are peers over one workspace,
     // not a toggle that only means something at one level.
     dom.asschema.className = 'btn-ghost' + (state.view === 'schema' ? ' on' : '');
     dom.asgraph.className = 'btn-ghost' + (state.view === 'graph' ? ' on' : '');
+    dom.asboth.className = 'btn-ghost' + (state.view === 'both' ? ' on' : '');
     dom.aslist.className = 'btn-ghost' + (state.view === 'list' ? ' on' : '');
     // Levels and depth belong to the instance views; an ontology is flat.
     dom.crumbs.hidden = asSchema;
@@ -217,6 +235,9 @@ function onGraph(evt) {
   // target: clicking it explains the contract rather than switching what you
   // are looking at.
   if (evt.schema) {
+    // An instance-of edge says only "this entity is of that type", which both
+    // its ends already show; it has nothing to inspect.
+    if (evt.data && evt.data.instanceOf) return;
     if (evt.target === 'node' && evt.data.schemaKind === 'type') {
       dispatch({ type: 'INSPECT_TYPE', name: evt.data.type });
     } else if (evt.target === 'edge') {
@@ -246,6 +267,7 @@ function boot() {
     search: $('search'), notice: $('notice'), expand: $('expand'),
     contract: $('contract'), depth: $('depth'), list: $('list'),
     aslist: $('aslist'), asgraph: $('asgraph'), asschema: $('asschema'),
+    asboth: $('asboth'),
     depthctl: $('depthctl')
   };
 
@@ -270,6 +292,11 @@ function boot() {
       schema.declaredTypes.filter(function (t) { return !model.byType.has(t); }).sort()
     );
     state = initial(schema.baseRelations, schema.derivedRelations);
+    // `khub serve --aspect` prints a URL carrying ?aspect=, so the page lands
+    // where the operator asked. Read once at boot; the buttons own the view
+    // from then on.
+    var landing = aspectView(window.location.search);
+    if (landing) state = Object.assign({}, state, { view: landing });
     panels.init(dispatch);
 
     gfx.mount(dom.cy, { nodes: model.nodes, edges: model.edges },
@@ -286,6 +313,10 @@ function boot() {
       dispatch({ type: 'SET_VIEW', view: 'schema' });
     });
     dom.aslist.addEventListener('click', function () { dispatch({ type: 'SET_VIEW', view: 'list' }); });
+    dom.asboth.addEventListener('click', function () {
+      gfx.setSnapNextFit();
+      dispatch({ type: 'SET_VIEW', view: 'both' });
+    });
     dom.asgraph.addEventListener('click', function () {
       // Snap rather than tween: the canvas sat under the list with a stale
       // viewport, so an animated fit would start from nowhere.

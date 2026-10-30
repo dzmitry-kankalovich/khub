@@ -70,6 +70,20 @@ Schema storage paths must be workspace-relative, normalized, outside `.khub`, an
 - `link <id> <pred> <target>` when the edge already exists prints `Edge already present` (exit 0).
 - `unlink <id> <pred> <target>` when there is no such edge prints `No edge <pred> -> <target> on <slug>` (exit 0).
 
+### Write warnings (per session)
+
+In a session, a successful write verb (`add`, `edit`, `link`, `unlink`, `remove`) also runs `check` and prints each gating finding the session has not been shown yet, one stderr line per finding, before its result and in every format:
+
+```
+warning: <id> › <rule>: <message>
+```
+
+`<rule>` is the `check --format json` bucket that holds the finding (`incomplete`, `dangling`, `strays`, `misplaced`, `cycles`, `alias_conflicts`, …), and `<id>` is the entity id, or the path, type or alias the finding is about. So the first write of a session surfaces the workspace's standing debt, and a later one only what changed: a finding whose message moved, or one that was fixed and came back, is new again. Only findings that fail default `check` are reported; orphans, `thin` and drafted optional singletons are not.
+
+The warnings are advisory. They never change a write's stdout, its exit code or what it writes to the workspace, and `validate` and `check` stay the gates. A refused write prints none.
+
+The session is `KHUB_SESSION`; when that is unset, Claude Code's `CLAUDE_CODE_SESSION_ID`. `KHUB_SESSION=` (set, empty) turns the warnings off. With no session, a write prints exactly what it always has. What each session has been shown is kept under `.khub/generated/sessions/`, which is gitignored; deleting it makes every session start over.
+
 A single malformed entity file (a broken frontmatter fence, unparseable YAML) no longer crashes the read commands. `validate` reports it as an error and `check` reports it as a `malformed` entry (text and JSON), and the rest of the workspace still resolves.
 
 ### Entity formats

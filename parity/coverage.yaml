@@ -187,6 +187,8 @@ error_codes:
 - illegal_predicate
 - internal_path_error
 - inbound_edge_refusal
+- invalid_base
+- invalid_out
 - invalid_schema
 - invalid_snapshot
 - invalid_slug

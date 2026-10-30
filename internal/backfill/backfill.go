@@ -249,31 +249,51 @@ func inferTypes(root string, scanned *index.Index) (map[index.Node]bool, []Stray
 }
 
 // strayReason is why one stray cannot be stamped, or "" when it can.
+//
+// The decision reads the file at the EDIT altitude, the one apply writes
+// from, never the scan's meta: the two disagree on a byte-order mark (the
+// scan sees no frontmatter, the edit read strips the mark and finds it), and
+// a stamp judged at the scan altitude would overwrite the author's `type`.
 func strayReason(root, rel string, rtype *schema.ResolvedType, meta *omap.Map, claimants []string) (string, error) {
-	if t, has := meta.Get("type"); has && t != nil {
-		return fmt.Sprintf("type is %s, the layout holds %s", pyRepr(values.Str(t)), pyRepr(rtype.Name)), nil
-	}
 	if rtype.Storage.Layout == schema.LayoutCollection {
-		// Only a row with an explicit `type: null` gets here; date backfill
-		// skips collections, and so does the stamp.
+		// A row with no `type` reads as its collection's, so a row stray has
+		// another type or a null one. Date backfill skips collections, and so
+		// does the stamp.
+		if t, _ := meta.Get("type"); values.Present(t) {
+			return typeReason(t, rtype), nil
+		}
 		return "a collection row; write its type by hand", nil
 	}
 	if len(claimants) > 1 {
 		return "claimed by more than one type (" + strings.Join(claimants, ", ") + ")", nil
 	}
-	if rtype.Storage.Fmt == "md" {
-		// The edit altitude is what apply reads: a file the scan read as
-		// fenceless (or whose fence only the loose scan accepts) has no
-		// frontmatter to add a key to.
-		text, err := canon.ReadTextIn(root, filepath.Join(root, filepath.FromSlash(rel)))
-		if err != nil {
-			return "", err
-		}
-		if _, _, err := canon.ReadDoc(text, "md"); err != nil {
-			return "no frontmatter to stamp", nil
-		}
+	text, err := canon.ReadTextIn(root, filepath.Join(root, filepath.FromSlash(rel)))
+	if err != nil {
+		return "", err
 	}
-	return "", nil
+	if strings.HasPrefix(text, "\uFEFF") {
+		// The scan cannot read past the mark and the writer would drop it.
+		return "starts with a byte-order mark; remove it and run again", nil
+	}
+	edit, _, err := canon.ReadDoc(text, rtype.Storage.Fmt)
+	if err != nil {
+		// Fenceless, or a fence only the loose scan accepts: no frontmatter
+		// to add a key to. Adopting a foreign file is not a stamp.
+		return "no frontmatter to stamp", nil
+	}
+	if t, _ := edit.Get("type"); values.Present(t) {
+		return typeReason(t, rtype), nil
+	}
+	return "", nil // absent, null or ''
+}
+
+// typeReason is the reason for a stray whose `type` names something else. A
+// non-string value is described, never rendered in another language's repr.
+func typeReason(t any, rtype *schema.ResolvedType) string {
+	if s, ok := t.(string); ok {
+		return fmt.Sprintf("type is %s, the layout holds %s", pyRepr(s), pyRepr(rtype.Name))
+	}
+	return fmt.Sprintf("type is not a type name, the layout holds %s", pyRepr(rtype.Name))
 }
 
 // pyRepr quotes a name the way khub's other messages do: 'x'.
@@ -381,9 +401,21 @@ func apply(root, path string, adds *additionSet) error {
 		return err
 	}
 	for _, field := range adds.order {
+		// Every addition was judged absent; a value at the edit altitude
+		// means the judgment read something else, and the write stops before
+		// it overwrites an authored value.
+		if v, _ := meta.Get(field); values.Present(v) {
+			return errs.New("would_overwrite", fmt.Sprintf("Refusing to overwrite '%s' in %s", field, filepath.ToSlash(relTo(root, path))))
+		}
 		meta.Set(field, adds.byField[field].value)
 	}
-	text, err = canon.SpliceDoc(text, meta, body, fmtName, readDocMode(fmtName))
+	if fmtName == "md" && emptyFrontmatter(text) {
+		// Nothing in an empty block to preserve; the splice would keep its
+		// blank line above the new key.
+		text, err = canon.Render(meta, body, fmtName)
+	} else {
+		text, err = canon.SpliceDoc(text, meta, body, fmtName, readDocMode(fmtName))
+	}
 	if errors.Is(err, canon.ErrNoSplice) {
 		text, err = canon.Render(meta, body, fmtName)
 	}
@@ -391,6 +423,20 @@ func apply(root, path string, adds *additionSet) error {
 		return err
 	}
 	return fsio.AtomicWriteIn(root, path, []byte(text))
+}
+
+// emptyFrontmatter is whether an md document's frontmatter block holds only
+// whitespace.
+func emptyFrontmatter(text string) bool {
+	yamlText, _, err := canon.SplitFrontmatter(text)
+	return err == nil && strings.TrimSpace(yamlText) == ""
+}
+
+func relTo(root, path string) string {
+	if rel, err := filepath.Rel(root, path); err == nil {
+		return rel
+	}
+	return path
 }
 
 // readDocMode is the resolver canon.ReadDoc read `meta` under, so an untouched

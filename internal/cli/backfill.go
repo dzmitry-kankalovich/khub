@@ -66,7 +66,12 @@ func backfillEmit(report *backfill.BackfillReport) {
 		fmt.Printf("Scaffolded frontmatter on %d entities\n", n)
 	}
 	if report.InferType {
-		fmt.Printf("Stamped type on %d strays\n", report.StampedEntities())
+		n := report.StampedEntities()
+		noun := "strays"
+		if n == 1 {
+			noun = "stray"
+		}
+		fmt.Printf("Stamped type on %d %s\n", n, noun)
 	}
 	emitSkipped(report)
 	emitStrays(report)

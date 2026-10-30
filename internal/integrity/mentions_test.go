@@ -141,3 +141,34 @@ func TestCheckMentionsAnInboundEdgeCounts(t *testing.T) {
 		t.Fatalf("an edge in the other direction still suggests one: %+v", report.Mentions)
 	}
 }
+
+func spansOf(body string, ms []mentionSpan) []string {
+	var out []string
+	for _, m := range ms {
+		out = append(out, m.target.ID()+"="+body[m.start:m.end])
+	}
+	return out
+}
+
+func TestFindMentionsEmphasisWrapAndFold(t *testing.T) {
+	sam := index.Node{Type: "person", Slug: "sam-roe"}
+	city := index.Node{Type: "site", Slug: "ecole"}
+	terms := termsFor(map[index.Node][]string{sam: {"Sam Roe"}, city: {"École"}})
+	body := "Ask __Sam\n  Roe__ at the _ÉCOLE_ or the école."
+	got := spansOf(body, findMentions(body, terms))
+	want := []string{"person/sam-roe=Sam\n  Roe", "site/ecole=ÉCOLE", "site/ecole=école"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestFindMentionsLeftmostThenLongest(t *testing.T) {
+	big := index.Node{Type: "client", Slug: "big-initech"}
+	opp := index.Node{Type: "opportunity", Slug: "initech-pov"}
+	terms := termsFor(map[index.Node][]string{big: {"Big Initech"}, opp: {"Initech POV"}})
+	body := "We met Big Initech POV Holdings."
+	got := spansOf(body, findMentions(body, terms))
+	if want := []string{"client/big-initech=Big Initech"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}

@@ -315,7 +315,7 @@ func CheckWith(root string, opts CheckOptions) (*CheckReport, error) {
 	body := bodyFindings(root, resolved, valid, nil)
 	var mentions []Mention
 	if opts.Mentions {
-		mentions = mentionSuggestions(resolved, valid, g, entityNodes)
+		mentions = mentionSuggestions(resolved, valid, g, entityNodes, body.templates)
 	}
 	return &CheckReport{
 		Mentions:                mentions,

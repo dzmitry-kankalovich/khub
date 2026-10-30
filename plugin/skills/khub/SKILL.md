@@ -80,7 +80,9 @@ hand-edit is how a workspace acquires a field no default gate will report.
    change caused.
    `khub check --mentions --format json` also lists, under `mentions`, entities a body names
    with no edge behind them. Prose is not a relation: `link` the ones the text really
-   relates to, using one of the row's `predicates`, and leave the rest.
+   relates to, using one of the row's `predicates`, and leave the rest. The predicates are
+   the mentioning entity's own; when the precise edge belongs to the entity named, link
+   from that side instead (`khub schema show <type>` lists its relations).
 6. `khub reindex` if you added, removed or re-linked anything. `index.md` is generated, and
    a stale one sends the next reader to a file that moved.
 

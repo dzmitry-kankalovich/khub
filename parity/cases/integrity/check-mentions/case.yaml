@@ -1,7 +1,7 @@
 # `check --mentions` suggests an edge for each entity a body names with no
 # edge between the two, in either direction: by title or name, alias or slug,
-# case-insensitively and on word boundaries, the longest name winning an
-# overlap. Self-mentions and already-linked targets are skipped, and a filled
+# case-insensitively and on word boundaries; of overlapping names the
+# leftmost wins, then the longest at that word. Self-mentions and already-linked targets are skipped, and a filled
 # single-valued relation is not offered. The suggestions never move `passed`
 # or the exit code, and without the flag the payload has no `mentions` key.
 mode: human

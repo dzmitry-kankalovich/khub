@@ -19,6 +19,7 @@ import (
 	"github.com/endgame-build/khub/internal/index"
 	"github.com/endgame-build/khub/internal/omap"
 	"github.com/endgame-build/khub/internal/schema"
+	"github.com/endgame-build/khub/internal/template"
 	"github.com/endgame-build/khub/internal/values"
 )
 
@@ -48,11 +49,71 @@ type mentionTerm struct {
 	target index.Node
 }
 
-// isWordRune is what a name is made of. A hyphen and an underscore join
-// words, so a slug (`dana-lee`) is one word and a name never matches the
-// middle of a hyphenated compound.
+// isWordRune is what a name is made of. A hyphen joins words, so a slug
+// (`dana-lee`) is one word and a name never matches the middle of a
+// hyphenated compound. An underscore does not: it is Markdown emphasis
+// (`_Initech_`, `__Sam Roe__`) far more often than part of a name.
 func isWordRune(r rune) bool {
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-'
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-'
+}
+
+// foldRune is r's case-insensitive key: the smallest rune of its simple
+// case-folding orbit, so two runes strings.EqualFold calls equal share a key.
+// Simple folding maps one rune to one rune; a full folding (`ß` to `ss`)
+// and Unicode normalization (NFD vs NFC) are deliberately out of scope.
+func foldRune(r rune) rune {
+	lowest := r
+	for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+		lowest = min(lowest, f)
+	}
+	return lowest
+}
+
+// foldKey is s with every rune replaced by its foldRune.
+func foldKey(s string) string {
+	return strings.Map(foldRune, s)
+}
+
+// matchAt matches term against text at byte offset i: rune by rune under
+// foldRune, a run of whitespace in the term against a run of at least one
+// whitespace rune in the text, so a name the author wrapped across a line
+// still matches. It returns the end offset in text.
+func matchAt(text string, i int, term string) (int, bool) {
+	ti := 0
+	for ti < len(term) {
+		tr, tn := utf8.DecodeRuneInString(term[ti:])
+		if unicode.IsSpace(tr) {
+			for ti < len(term) {
+				r, n := utf8.DecodeRuneInString(term[ti:])
+				if !unicode.IsSpace(r) {
+					break
+				}
+				ti += n
+			}
+			start := i
+			for i < len(text) {
+				r, n := utf8.DecodeRuneInString(text[i:])
+				if !unicode.IsSpace(r) {
+					break
+				}
+				i += n
+			}
+			if i == start {
+				return 0, false
+			}
+			continue
+		}
+		if i >= len(text) {
+			return 0, false
+		}
+		br, bn := utf8.DecodeRuneInString(text[i:])
+		if br != tr && foldRune(br) != foldRune(tr) {
+			return 0, false
+		}
+		ti += tn
+		i += bn
+	}
+	return i, true
 }
 
 // mentionTermsOf is every name the node answers to: `title`, `name`, each
@@ -75,7 +136,7 @@ func mentionTermsOf(node index.Node, meta *omap.Map) []string {
 		if utf8.RuneCountInString(t) < minMentionRunes || !strings.ContainsFunc(t, unicode.IsLetter) {
 			continue
 		}
-		k := strings.ToLower(t)
+		k := foldKey(t)
 		if seen[k] {
 			continue
 		}
@@ -85,13 +146,13 @@ func mentionTermsOf(node index.Node, meta *omap.Map) []string {
 	return out
 }
 
-// firstWord is the leading run of word runes, lowercased.
+// firstWord is the leading run of word runes, under foldKey.
 func firstWord(s string) string {
 	end := strings.IndexFunc(s, func(r rune) bool { return !isWordRune(r) })
 	if end < 0 {
 		end = len(s)
 	}
-	return strings.ToLower(s[:end])
+	return foldKey(s[:end])
 }
 
 // mentionSpan is one match of a term in a body.
@@ -101,10 +162,11 @@ type mentionSpan struct {
 }
 
 // findMentions returns the matches in body, left to right. A match starts and
-// ends on a word boundary and compares case-insensitively. Where matches
-// overlap, the one starting first wins, then the longest: "Initech POV" names
-// the opportunity, not the client called "Initech". A name two entities share
-// matches both.
+// ends on a word boundary and compares case-insensitively (see matchAt).
+// Where matches overlap, the leftmost wins, and among those starting at the
+// same word the longest: "Initech POV" names the opportunity, not the client
+// called "Initech", and in "Big Initech POV" a name "Big Initech" wins over
+// "Initech POV". A name two entities share matches both.
 func findMentions(body string, terms map[string][]mentionTerm) []mentionSpan {
 	var all []mentionSpan
 	prevWord := false
@@ -112,8 +174,8 @@ func findMentions(body string, terms map[string][]mentionTerm) []mentionSpan {
 		word := isWordRune(r)
 		if word && !prevWord {
 			for _, t := range terms[firstWord(body[i:])] {
-				end := i + len(t.text)
-				if end > len(body) || !strings.EqualFold(body[i:end], t.text) {
+				end, ok := matchAt(body, i, t.text)
+				if !ok {
 					continue
 				}
 				if next, _ := utf8.DecodeRuneInString(body[end:]); end < len(body) && isWordRune(next) {
@@ -174,8 +236,18 @@ func mentionPredicates(rtype *schema.ResolvedType, meta *omap.Map, target string
 // entity the body names that shares no edge with it, and that some relation
 // of the mentioning type could link. Rows are in (type, slug) order of the
 // mentioning entity, then target id order; each pair is one row, carrying the
-// first spelling the body used. idx must carry bodies.
-func mentionSuggestions(resolved *schema.ResolvedSchema, idx *index.Index, g *graph.Graph, nodes []index.Node) []Mention {
+// first spelling the body used, its whitespace collapsed. idx must carry
+// bodies; templates is the per-type contract bodyFindings loaded.
+//
+// Only prose is read: fenced code and HTML comments (a template's hint
+// comments among them) are blanked, and so is each heading text the type's
+// template declares — scaffolding `add` seeded, which names nothing. Drafts
+// are read on both sides: linking to or from a draft is legal, and a draft is
+// exactly the entity still being wired in.
+func mentionSuggestions(
+	resolved *schema.ResolvedSchema, idx *index.Index, g *graph.Graph, nodes []index.Node,
+	templates map[string]*template.BodyTemplate,
+) []Mention {
 	terms := map[string][]mentionTerm{}
 	for _, n := range nodes {
 		for _, t := range mentionTermsOf(n, idx.Meta[n]) {
@@ -190,14 +262,15 @@ func mentionSuggestions(resolved *schema.ResolvedSchema, idx *index.Index, g *gr
 			continue
 		}
 		rtype, _ := resolved.Types.Get(source.Type)
+		prose := template.MaskTemplateHeadings(templates[source.Type], template.Prose(body))
 		first := map[index.Node]string{}
 		var targets []index.Node
-		for _, m := range findMentions(body, terms) {
+		for _, m := range findMentions(prose, terms) {
 			if m.target == source || g.Linked(source, m.target) {
 				continue
 			}
 			if _, seen := first[m.target]; !seen {
-				first[m.target] = body[m.start:m.end]
+				first[m.target] = strings.Join(strings.Fields(prose[m.start:m.end]), " ")
 				targets = append(targets, m.target)
 			}
 		}

@@ -138,7 +138,39 @@ type CheckReport struct {
 	Misplaced []Misplaced
 	// Aliases that name more than one entity. Fails the gate.
 	AliasConflicts []AliasConflict
+	// Findings a policy `waive` entry accepts, moved out of their bucket and
+	// kept visible here with the reason. Never consulted by Passed.
+	Waived []Waived
+	// Waivers no finding matched — the finding was fixed, the entity renamed
+	// or removed, or the waiver mistyped. Fails the gate, so a waiver cannot
+	// rot into a standing exemption for whatever later reappears.
+	StaleWaivers []StaleWaiver
 }
+
+// Waived is one finding a policy waiver accepts. Finding names the bucket it
+// was moved out of; Detail is the finding itself, as that bucket holds it
+// (Incomplete, Dangling, FieldError, or an orphan's qualified id).
+type Waived struct {
+	Type    string
+	Slug    string
+	Finding string
+	Reason  string
+	Detail  any
+}
+
+// ID is Waived.id.
+func (w Waived) ID() string { return w.Type + "/" + w.Slug }
+
+// StaleWaiver is a policy waiver that matched no finding.
+type StaleWaiver struct {
+	Type    string
+	Slug    string
+	Finding string
+	Reason  string
+}
+
+// ID is StaleWaiver.id.
+func (w StaleWaiver) ID() string { return w.Type + "/" + w.Slug }
 
 // Passed is CheckReport.passed.
 func (r *CheckReport) Passed() bool {
@@ -157,7 +189,8 @@ func (r *CheckReport) Passed() bool {
 		len(r.MissingSingletons) == 0 &&
 		len(r.DraftRequiredSingletons) == 0 &&
 		len(r.Misplaced) == 0 &&
-		len(r.AliasConflicts) == 0
+		len(r.AliasConflicts) == 0 &&
+		len(r.StaleWaivers) == 0
 }
 
 // Check is integrity.check: walk the active subgraph for completeness,
@@ -290,7 +323,7 @@ func Check(root string, strict bool) (*CheckReport, error) {
 	// Bodies, over every valid node of every templated type — the same pass
 	// validate runs, whole-workspace.
 	body := bodyFindings(root, resolved, valid, nil)
-	return &CheckReport{
+	report := &CheckReport{
 		TemplateInvalid:         body.templateInvalid,
 		BodyShape:               body.shape,
 		Thin:                    body.gaps,
@@ -309,7 +342,74 @@ func Check(root string, strict bool) (*CheckReport, error) {
 		StrayTemplates:          strayTemplates,
 		MissingTemplates:        missingTemplates,
 		AliasConflicts:          aliasConflicts(valid, entityNodes),
-	}, nil
+	}
+	applyWaivers(resolved, report)
+	return report, nil
+}
+
+// applyWaivers moves every finding a policy `waive` entry names out of its
+// bucket into Waived, and reports each waiver that matched nothing as stale.
+//
+// A waiver covers its whole bucket for that entity: every dangling edge it
+// holds, every body finding. Matching runs regardless of --strict — an orphan
+// is an orphan whether or not the gate counts it, so its waiver is never
+// stale for want of the flag.
+func applyWaivers(resolved *schema.ResolvedSchema, r *CheckReport) {
+	type key struct{ typ, slug, finding string }
+	reasons := map[key]string{}
+	for _, tname := range resolved.Types.Keys() {
+		rtype, _ := resolved.Types.Get(tname)
+		for _, w := range rtype.Waivers {
+			reasons[key{tname, w.Slug, w.Finding}] = w.Reason
+		}
+	}
+	r.Waived = []Waived{}
+	r.StaleWaivers = []StaleWaiver{}
+	if len(reasons) == 0 {
+		return
+	}
+	matched := map[key]bool{}
+	// waive reports whether the finding is waived, recording it if so.
+	waive := func(finding, typ, slug string, detail any) bool {
+		k := key{typ, slug, finding}
+		reason, ok := reasons[k]
+		if !ok {
+			return false
+		}
+		matched[k] = true
+		r.Waived = append(r.Waived, Waived{Type: typ, Slug: slug, Finding: finding, Reason: reason, Detail: detail})
+		return true
+	}
+	// In the order check emits the buckets (schema.WaivableFindings).
+	r.Incomplete = keep(r.Incomplete, func(i Incomplete) bool { return !waive("incomplete", i.Type, i.Slug, i) })
+	r.Orphans = keep(r.Orphans, func(id string) bool {
+		typ, slug, _ := strings.Cut(id, "/")
+		return !waive("orphans", typ, slug, id)
+	})
+	r.Dangling = keep(r.Dangling, func(d Dangling) bool { return !waive("dangling", d.Type, d.Slug, d) })
+	r.BodyShape = keep(r.BodyShape, func(e FieldError) bool { return !waive("body_shape", e.Type, e.Slug, e) })
+	r.Thin = keep(r.Thin, func(e FieldError) bool { return !waive("thin", e.Type, e.Slug, e) })
+
+	for _, tname := range resolved.Types.Keys() {
+		rtype, _ := resolved.Types.Get(tname)
+		for _, w := range rtype.Waivers {
+			if !matched[key{tname, w.Slug, w.Finding}] {
+				r.StaleWaivers = append(r.StaleWaivers,
+					StaleWaiver{Type: tname, Slug: w.Slug, Finding: w.Finding, Reason: w.Reason})
+			}
+		}
+	}
+}
+
+// keep returns the items pred accepts, in order, never nil.
+func keep[T any](items []T, pred func(T) bool) []T {
+	out := make([]T, 0, len(items))
+	for _, it := range items {
+		if pred(it) {
+			out = append(out, it)
+		}
+	}
+	return out
 }
 
 // aliasConflicts groups every declared alias case-insensitively, the way ID

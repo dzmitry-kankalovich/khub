@@ -2,6 +2,18 @@
 
 Notable changes to khub. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); khub is pre-release.
 
+## [Unreleased]
+
+### Added
+
+- **Check waivers.** Policy `waive` accepts one entity's `incomplete`,
+  `orphans`, `dangling`, `body_shape` or `thin` finding, with a required
+  reason. `check` moves a waived finding out of its bucket into a new
+  `waived` list, with the reason and the finding itself, and it no longer
+  counts against `passed`. A waiver that matches no finding is listed under
+  the new `stale_waivers` bucket and fails the gate, so waivers cannot rot.
+  `check --format json` now always carries both keys.
+
 ## [0.30.0] — 2026-10-28
 
 Storage can now follow a hub's existing nesting, relations can point to files

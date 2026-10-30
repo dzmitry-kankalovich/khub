@@ -445,3 +445,19 @@ func TestUnderReachesAnchorTransitively(t *testing.T) {
 		t.Fatalf("nothing reaches node-a; got %v", leaf)
 	}
 }
+
+// UnderInverse walks the stored edges forward from the anchor, only through
+// the pairs the caller says declare the inverse.
+func TestUnderInverseWalksDeclaringEdgesForward(t *testing.T) {
+	g := BuildGraph(buildIdx(t, impactWS(t)))
+	all := UnderInverse(g, index.Node{Type: "client", Slug: "node-a"},
+		func(sourceType, predicate string) bool { return sourceType == "client" && predicate == "depends_on" })
+	if len(all) != 2 || all[index.Node{Type: "client", Slug: "node-c"}] != 2 {
+		t.Fatalf("want node-b at 1 and node-c at 2, got %v", all)
+	}
+	none := UnderInverse(g, index.Node{Type: "client", Slug: "node-a"},
+		func(sourceType, predicate string) bool { return sourceType == "person" })
+	if len(none) != 0 {
+		t.Fatalf("no declaring pair, no scope; got %v", none)
+	}
+}

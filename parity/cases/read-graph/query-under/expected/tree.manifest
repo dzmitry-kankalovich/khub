@@ -20,6 +20,9 @@ b3aea6ef41e4081e244e1ac1b3f8adc0bf5821c5ae94ee60da9b1284836841ab - knowledge/arc
 a67e7d22d441f4e789d258b46775f7d85efb9fe20ac30122bdd8d12b96158b62 - knowledge/components/cmp-gateway.md
 68f6c924f8dba3f2b3d8ff7d746d1b845a9186c3c8d395946b6256385d830889 - knowledge/components/cmp-ledger.md
 096a9dc3b93c1d329f2bfa5c8771502eb53bc89410386a8501ac9c6ce69853bc - knowledge/components/cmp-stripe.md
+c7eb1288324acc171da3a14e4e52825ff339e2532116476447c141f2f4154477 - knowledge/decisions/ad-2026-01-15-one.md
+cfd7638bc9ad000eb0dece0a1ec95e934f281fca56edde6e491b684bc14861b2 - knowledge/decisions/ad-2026-01-15-three.md
+86e861a90aef40b07119741efbd44529a6abd2fadbb88cebbe218b588e3d70f7 - knowledge/decisions/ad-2026-01-15-two.md
 8d3dd17e861bcfc80ea889b99d0c10ac518d8beb4585caf0737239201dac1d43 - knowledge/prd.md
 ba97c53863c3abf7e47f618c5323fd9d3b32e446a7be0bc8af90adc54f59bb0e - knowledge/systems/sys-back-office.md
 2ebf03b4c4ee148488ed400edeccf130da066508758237754346c1ae9e52bbf8 - knowledge/systems/sys-shop.md

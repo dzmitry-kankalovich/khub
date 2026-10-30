@@ -235,7 +235,7 @@ Options:
   --has <str>  Keep entities with a resolvable edge for the predicate.
   --missing <str>  Keep entities lacking a resolvable edge (gap finder).
   --under <str>  Keep entities that reach this entity over --via, any number of hops.
-  --via <str>  The relation --under follows, from an entity up to its parent.
+  --via <str>  The relation --under follows up to its parent, or its declared inverse.
   --orphan  Keep only orphan (edge-less) entities.
   --stale  Keep only stale entities.
   --draft  Isolate drafts.

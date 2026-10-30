@@ -172,6 +172,22 @@ func Under(g *Graph, src index.Node, predicate string) map[index.Node]int {
 	return depths
 }
 
+// UnderInverse is Under over a declared inverse: a node is under src when
+// src's stored edge points to it, through any (source type, predicate) pair
+// that declares the inverse. That is the parent-stored hierarchy (a
+// requirement's `use_cases`) walked forward from src.
+func UnderInverse(g *Graph, src index.Node, declares func(sourceType, predicate string) bool) map[index.Node]int {
+	succ := map[index.Node][]index.Node{}
+	for _, e := range g.Edges() {
+		if declares(e.From.Type, e.Predicate) {
+			succ[e.From] = append(succ[e.From], e.To)
+		}
+	}
+	depths := shortestPathLengths(succ, src)
+	delete(depths, src)
+	return depths
+}
+
 // predicateAdjacency is _predicate_digraph collapsed to a successor map, with
 // the reverse view folded in (sub.reverse(copy=False)).
 func predicateAdjacency(g *Graph, predicate string, reverse bool) map[index.Node][]index.Node {
@@ -351,6 +367,12 @@ func RequirePredicate(resolved *schema.ResolvedSchema, predicate string) error {
 	if declared[predicate] {
 		return nil
 	}
+	return UnknownPredicate(predicate, declared)
+}
+
+// UnknownPredicate is the `unknown_predicate` refusal, listing the declared
+// names sorted.
+func UnknownPredicate(predicate string, declared map[string]bool) error {
 	names := make([]string, 0, len(declared))
 	for p := range declared {
 		names = append(names, p)

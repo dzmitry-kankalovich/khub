@@ -30,7 +30,7 @@ func registerQuery(root *cobra.Command) {
 	cmd.Flags().StringVar(&has, "has", "", "Keep entities with a resolvable edge for the predicate.")
 	cmd.Flags().StringVar(&missing, "missing", "", "Keep entities lacking a resolvable edge (gap finder).")
 	cmd.Flags().StringVar(&under, "under", "", "Keep entities that reach this entity over --via, any number of hops.")
-	cmd.Flags().StringVar(&via, "via", "", "The relation --under follows, from an entity up to its parent.")
+	cmd.Flags().StringVar(&via, "via", "", "The relation --under follows up to its parent, or its declared inverse.")
 	cmd.Flags().BoolVar(&orphan, "orphan", false, "Keep only orphan (edge-less) entities.")
 	cmd.Flags().BoolVar(&stale, "stale", false, "Keep only stale entities.")
 	cmd.Flags().BoolVar(&draft, "draft", false, "Isolate drafts.")

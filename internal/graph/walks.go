@@ -174,8 +174,8 @@ func Under(g *Graph, src index.Node, predicate string) map[index.Node]int {
 
 // UnderInverse is Under over a declared inverse: a node is under src when
 // src's stored edge points to it, through any (source type, predicate) pair
-// that declares the inverse. That is the parent-stored hierarchy (a
-// requirement's `use_cases`) walked forward from src.
+// that declares the inverse. That is a hierarchy stored on the parent (an
+// ADR's `supersedes`, read as `superseded`) walked forward from src.
 func UnderInverse(g *Graph, src index.Node, declares func(sourceType, predicate string) bool) map[index.Node]int {
 	succ := map[index.Node][]index.Node{}
 	for _, e := range g.Edges() {

@@ -2,6 +2,27 @@
 
 Notable changes to khub. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); khub is pre-release.
 
+## [Unreleased]
+
+### Added
+
+- **`khub layout migrate`.** A type's `layout`/`format`/`path` is config in
+  `.khub/storage.yaml`, and now a verb moves a live type with it:
+  `khub layout migrate repo --layout collection --to-format jsonl` turns a
+  directory of md files into one collection file, `--to-format json` changes
+  a format, `--layout file` unpacks a collection, `--path` moves a type. A dry
+  run by default; `--execute` performs it under the workspace lock, staged and
+  journaled like `upgrade`, then regenerates `index.md`. The whole set is
+  validated on a copy of the workspace first — the schema must resolve, the
+  scan must find the same entities, `validate` must gain no error — and the
+  plan refuses a destination that exists, a storage tree holding what is not
+  the type's entities, a singleton, a path template, and a value the
+  destination cannot carry. A round trip reproduces the files khub wrote
+  byte for byte. `storage.yaml` keeps every other byte: the type's entry is
+  spliced in place. `khub layout` lists where every type lands.
+- The Claude Code plugin (0.1.5) reads `khub layout migrate --execute` as a
+  write, so the band refreshes after a migration.
+
 ## [0.30.0] — 2026-10-28
 
 Storage can now follow a hub's existing nesting, relations can point to files

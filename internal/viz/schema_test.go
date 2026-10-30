@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/endgame-build/khub/internal/introspect"
+	"github.com/endgame-build/khub/internal/schema"
 )
 
 // aspectData splits a render into node and edge data records.
@@ -183,9 +184,13 @@ func TestSchemaTypeFilterKeepsOutboundFrontier(t *testing.T) {
 	for _, n := range nodes {
 		drawn[n["id"].(string)] = true
 	}
+	base := 0
 	for _, e := range edges {
 		if e["source"] != SchemaID("project") {
 			t.Errorf("edge %v does not leave project", e)
+		}
+		if e["target"] == SchemaAny && resolved.BaseRelations.Has(e["predicate"].(string)) {
+			base++
 		}
 		if !drawn[e["target"].(string)] {
 			t.Errorf("edge %v lands on an undrawn box", e)
@@ -194,6 +199,58 @@ func TestSchemaTypeFilterKeepsOutboundFrontier(t *testing.T) {
 	rtype, _ := resolved.Types.Get("project")
 	if len(ownRelations(resolved, rtype)) > 0 && len(edges) == 0 {
 		t.Error("project's relations were not drawn")
+	}
+	// The base relations are part of the type's frontier: they leave it for any.
+	if base != resolved.BaseRelations.Len() {
+		t.Errorf("base relations drawn from project = %d, want %d", base, resolved.BaseRelations.Len())
+	}
+	if !drawn[SchemaAny] {
+		t.Error("the any box is missing under a filter")
+	}
+}
+
+// A type may be named anything the loader accepts, `*` included; no type box
+// id can be the any box's.
+func TestAnyBoxIDCannotCollideWithATypeBox(t *testing.T) {
+	for _, name := range []string{"*", "any", "-any", ""} {
+		if SchemaID(name) == SchemaAny {
+			t.Errorf("type %q collides with the any box", name)
+		}
+	}
+	if strings.HasPrefix(SchemaAny, "schema:") || strings.Contains(SchemaAny, "/") {
+		t.Errorf("SchemaAny %q shares a namespace with types or entities", SchemaAny)
+	}
+}
+
+// Enum values that read as notation are quoted; a list's upper bound is *;
+// an inverse is named on the edge it is derived from.
+func TestSchemaNotationEdges(t *testing.T) {
+	a := &schema.ResolvedAttribute{Name: "k", BaseType: "text", Enum: []string{"a", "b|c", "d}", "", " e"}}
+	if got, want := attrLine(a), `k: {a|"b|c"|"d}"|""|" e"} [0..1]`; got != want {
+		t.Errorf("enum line = %s, want %s", got, want)
+	}
+	if got := attrLine(&schema.ResolvedAttribute{Name: "tags", BaseType: "list"}); got != "tags: list [0..*]" {
+		t.Errorf("list line = %s", got)
+	}
+	if got := attrLine(&schema.ResolvedAttribute{Name: "tags", BaseType: "list", Required: true}); got != "tags: list [1..*]" {
+		t.Errorf("required list line = %s", got)
+	}
+	inv := "consumed_by"
+	e := schemaEdge("a", "b", &schema.ResolvedRelation{Predicate: "consumes", Many: true, Inverse: &inv})
+	if label := str(t, dataOf(t, e), "label"); label != "consumes [0..*] / consumed_by" {
+		t.Errorf("label = %v", label)
+	}
+}
+
+// A library caller that skips the CLI's check gets an error, not a render of
+// another aspect.
+func TestUnknownAspectIsAnError(t *testing.T) {
+	root := firmOpsWS(t)
+	if _, _, err := AspectGraph(root, "nope", nil); err == nil {
+		t.Error("an unknown aspect rendered")
+	}
+	if _, err := VizAspect(root, "x.html", "", nil); err == nil {
+		t.Error("an empty aspect rendered")
 	}
 }
 

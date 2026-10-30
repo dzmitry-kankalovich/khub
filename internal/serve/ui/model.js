@@ -349,7 +349,12 @@ export function sortRows(rows, sort) {
 // point at anything, and drawing that by expansion would put an edge from its
 // source to every type — for depends_on, every type to every type. One node
 // says the same thing and stays readable.
-export var SCHEMA_ANY = 'schema:*';
+//
+// `schema-any`, not `schema:*`: a type box is `schema:<name>`, and the loader
+// accepts a type named `*`, whose box then took this id — cy.add drops the
+// duplicate and the base relations landed on that type. No `schema:<name>`
+// can equal this one. viz.SchemaAny is the same id.
+export var SCHEMA_ANY = 'schema-any';
 
 // schemaId keeps ontology nodes in their own namespace, distinct from an
 // entity's `type/slug`. A collision throws inside cy.add, mid-render, with
@@ -484,9 +489,12 @@ var ASPECT_VIEWS = { schema: 'schema', instances: 'graph', both: 'both' };
 
 // aspectView reads the landing view from a location.search string. An absent
 // or unknown value is null, and the page keeps its own default.
+//
+// URLSearchParams, not decodeURIComponent: it decodes a malformed escape
+// (`%E0`) to U+FFFD instead of throwing, and a throw here would land inside
+// boot and leave the page unmounted over a typo in the address bar.
 export function aspectView(search) {
-  var m = /[?&]aspect=([^&]*)/.exec(search || '');
-  if (!m) return null;
-  var name = decodeURIComponent(m[1]);
+  var name = new URLSearchParams(search || '').get('aspect');
+  if (name === null) return null;
   return Object.prototype.hasOwnProperty.call(ASPECT_VIEWS, name) ? ASPECT_VIEWS[name] : null;
 }

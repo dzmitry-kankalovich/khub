@@ -21,10 +21,12 @@ import (
 	"github.com/endgame-build/khub/internal/schema"
 )
 
-// SchemaAny is the id of the `any` box. Schema ids live in their own
-// `schema:` namespace — the one serve's page uses — so they can never collide
-// with an entity's `type/slug`. `*` is the id serve's page gives the same box.
-const SchemaAny = "schema:*"
+// SchemaAny is the id of the `any` box. A type's box is `schema:<name>` — the
+// namespace serve's page uses — and an entity is `type/slug`, so neither can
+// be `schema-any` whatever a type is called: the seventh byte of every type
+// box id is `:`, and every entity id holds a `/`. (`schema:*` collided with a
+// type named `*`, which the loader accepts.) serve's page uses the same id.
+const SchemaAny = "schema-any"
 
 // SchemaID is the node id of a declared type's box.
 func SchemaID(typeName string) string { return "schema:" + typeName }
@@ -57,10 +59,12 @@ func SchemaTypes(resolved *schema.ResolvedSchema, typeFilter *string) []string {
 // SchemaElements draws the boxes for types and the relations that leave them.
 //
 // Unfiltered, every type's own relations are drawn and the `any` box carries
-// the base block. Under a type filter only that type's own relations are
-// drawn — any other box in types is there as a target (or, in the combined
-// view, as the type of a drawn entity) — and `any` appears only when one of
-// those relations may point at any type.
+// the base block: its attributes, and its relations as `any` -> `any`. Under a
+// type filter only that type's relations are drawn — any other box in types is
+// there as a target (or, in the combined view, as the type of a drawn entity).
+// The base relations then leave the filtered type for `any`, because they are
+// part of that type's outbound frontier: the instance half draws its
+// `depends_on` edges, and the schema half has to say they are legal.
 func SchemaElements(resolved *schema.ResolvedSchema, types []string, typeFilter *string) *Elements {
 	els := &Elements{Nodes: []*omap.Map{}, Edges: []*omap.Map{}}
 	drawn := map[string]bool{}
@@ -102,19 +106,23 @@ func SchemaElements(resolved *schema.ResolvedSchema, types []string, typeFilter 
 			}
 		}
 	}
+	// The base relations are declared on every type and point at any type,
+	// so from `any` to `any` is exactly their claim — or, under a filter,
+	// from the filtered type to `any`.
+	baseFrom := SchemaAny
+	if typeFilter != nil {
+		baseFrom = SchemaID(*typeFilter)
+	}
+	for _, p := range resolved.BaseRelations.Keys() {
+		rel, _ := resolved.BaseRelations.Get(p)
+		needAny = true
+		els.Edges = append(els.Edges, schemaEdge(baseFrom, SchemaAny, rel))
+	}
 	if needAny {
 		var attrs []*schema.ResolvedAttribute
-		if typeFilter == nil {
-			for _, name := range resolved.BaseAttributes.Keys() {
-				a, _ := resolved.BaseAttributes.Get(name)
-				attrs = append(attrs, a)
-			}
-			// The base relations are declared on every type and point at any
-			// type, so from `any` to `any` is exactly their claim.
-			for _, p := range resolved.BaseRelations.Keys() {
-				rel, _ := resolved.BaseRelations.Get(p)
-				els.Edges = append(els.Edges, schemaEdge(SchemaAny, SchemaAny, rel))
-			}
+		for _, name := range resolved.BaseAttributes.Keys() {
+			a, _ := resolved.BaseAttributes.Get(name)
+			attrs = append(attrs, a)
 		}
 		els.Nodes = append(els.Nodes, schemaNode(SchemaAny, "any", "", attrs))
 	}
@@ -174,7 +182,13 @@ func schemaEdge(source, target string, rel *schema.ResolvedRelation) *omap.Map {
 	data := omap.New()
 	data.Set("source", source)
 	data.Set("target", target)
-	data.Set("label", rel.Predicate+" "+multiplicity(rel.Required, rel.Many))
+	label := rel.Predicate + " " + multiplicity(rel.Required, rel.Many)
+	if rel.Inverse != nil {
+		// The inverse is not a second edge: khub derives it at read time from
+		// this one, so it is named on the edge it is read from.
+		label += " / " + *rel.Inverse
+	}
+	data.Set("label", label)
 	data.Set("aspect", AspectSchema)
 	data.Set("predicate", rel.Predicate)
 	data.Set("required", rel.Required)
@@ -185,13 +199,28 @@ func schemaEdge(source, target string, rel *schema.ResolvedRelation) *omap.Map {
 }
 
 // attrLine is a UML attribute line: `name: type [multiplicity]`, with an enum
-// shown as its values, since the values are what an author has to write.
+// shown as its values, since the values are what an author has to write. A
+// list holds many values, so its upper bound is `*`.
 func attrLine(a *schema.ResolvedAttribute) string {
 	kind := a.BaseType
 	if len(a.Enum) > 0 {
-		kind = "{" + strings.Join(a.Enum, "|") + "}"
+		vals := make([]string, len(a.Enum))
+		for i, v := range a.Enum {
+			vals[i] = enumValue(v)
+		}
+		kind = "{" + strings.Join(vals, "|") + "}"
 	}
-	return a.Name + ": " + kind + " " + multiplicity(a.Required, false)
+	return a.Name + ": " + kind + " " + multiplicity(a.Required, a.BaseType == "list")
+}
+
+// enumValue quotes a value that would read as the notation's own syntax — a
+// separator, a brace, a quote — or that is empty or padded, so `{a|b}` always
+// means two values.
+func enumValue(v string) string {
+	if v == "" || strings.ContainsAny(v, "|{}\"\\") || strings.TrimSpace(v) != v {
+		return strconv.Quote(v)
+	}
+	return v
 }
 
 // multiplicity is UML's: required sets the lower bound, many the upper.

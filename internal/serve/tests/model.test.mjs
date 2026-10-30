@@ -20,6 +20,9 @@ test('aspect query parameter picks the landing view', async () => {
  assert.equal(aspectView('?aspect=bogus'), null);
  assert.equal(aspectView('?aspect=toString'), null);
  assert.equal(aspectView(''), null);
+ assert.equal(aspectView('?aspect=%E0'), null);
+ assert.equal(aspectView('?aspect=schema%'), null);
+ assert.equal(aspectView('?aspect=%62oth'), 'both');
 });
 test('both view boxes only the types on screen and links each entity to its type', async () => {
  const { buildBothGraph, schemaId, SCHEMA_ANY } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));

@@ -105,6 +105,11 @@ function render(changed) {
     var ids = new Set();
     visible.nodes.forEach(function (id) { ids.add(id); });
     visible.edges.forEach(function (id) { ids.add(id); });
+    // Only navigation relayouts the combined view. A filter toggle rebuilds
+    // the overlay (which boxes and relations show depends on it), so the
+    // boxes' positions are read first and put back after.
+    var relayout = changed.focus || changed.depth || changed.view;
+    var saved = (asBoth && !relayout) ? gfx.overlayPositions() : null;
     if (asBoth) {
       var both = buildBothGraph(
         buildSchemaGraph(schema, schemaEdges, state.hiddenPredicates, usedEdgeCounts(model), model.byType),
@@ -123,11 +128,14 @@ function render(changed) {
     // an edgeless set into a connected one, and a grid laid out for no edges is
     // the wrong shape for a graph that now has a hundred.
     //
-    // The combined view always relayouts: its overlay was just rebuilt, and a
-    // freshly added type box has no position until a layout gives it one.
+    // The combined view follows the same rule. Its overlay was just rebuilt,
+    // so on a filter change the boxes go back where they were, and a box the
+    // change brought in is placed above the entities that realize it rather
+    // than relaying out every entity on the canvas.
     if (asBoth) {
       lastLayout = 'both';
-      gfx.runLayout({ name: 'both' });
+      if (relayout || !saved.size) gfx.runLayout({ name: 'both' });
+      else gfx.restoreOverlay(saved);
     } else if (changed.focus || changed.depth || changed.view ||
         visible.layout.name !== lastLayout) {
       lastLayout = visible.layout.name;

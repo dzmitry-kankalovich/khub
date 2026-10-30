@@ -87,6 +87,45 @@ export function setOverlay(elements) {
   return added.map(function (ele) { return ele.id(); });
 }
 
+// overlayPositions reads where the overlay's nodes sit, keyed by id, so a
+// rebuilt overlay can be put back without a layout.
+export function overlayPositions() {
+  var saved = new Map();
+  cy.nodes('.sch').forEach(function (n) {
+    var p = n.position();
+    saved.set(n.id(), { x: p.x, y: p.y });
+  });
+  return saved;
+}
+
+// restoreOverlay puts each overlay node back where it was. A node that was not
+// there before (a type box a filter change brought in) goes on the boxes' row,
+// above the mean of the visible entities realizing it — or, with none, at the
+// row's right end. Called after showOnly, so `.off` is already settled.
+export function restoreOverlay(saved) {
+  var top = Infinity, right = -Infinity;
+  saved.forEach(function (p) {
+    if (p.y < top) top = p.y;
+    if (p.x > right) right = p.x;
+  });
+  cy.batch(function () {
+    cy.nodes('.sch').forEach(function (n) {
+      var p = saved.get(n.id());
+      if (p) { n.position(p); return; }
+      var members = n.incomers('edge.instof').sources().not('.off');
+      var x = right + 160;
+      if (members.length) {
+        x = 0;
+        members.forEach(function (m) { x += m.position('x'); });
+        x /= members.length;
+      } else {
+        right = x;
+      }
+      n.position({ x: x, y: top });
+    });
+  });
+}
+
 export function runLayout(spec) {
   // Always the visible collection, never cy.layout(): the core-level call
   // operates on ALL elements including the hidden ones.

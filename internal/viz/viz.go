@@ -11,6 +11,7 @@
 package viz
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -120,6 +121,12 @@ func Graph(root string, typeFilter *string) (*Elements, []string, error) {
 // the three aspects of one workspace only where the set of drawn types agrees.
 // For the instance aspect that set is unchanged from before aspects existed.
 func AspectGraph(root, aspect string, typeFilter *string) (*Elements, []string, error) {
+	if !ValidAspect(aspect) {
+		// The CLI refuses an unknown aspect as a usage error before it gets
+		// here; a library caller that skips that check must not get a render
+		// of some other aspect back.
+		return nil, nil, fmt.Errorf("unknown aspect %q: want one of %s", aspect, strings.Join(Aspects, ", "))
+	}
 	resolved, err := introspect.LoadSchema(root)
 	if err != nil {
 		return nil, nil, err

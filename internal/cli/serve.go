@@ -73,6 +73,6 @@ func registerServe(root *cobra.Command) {
 	cmd.Flags().IntVar(&port, "port", serve.DefaultPort,
 		"Port to bind on 127.0.0.1; 0 takes an ephemeral one.")
 	cmd.Flags().StringVar(&aspect, "aspect", "",
-		"View to open on: schema, instances, or both. Default: the schema view.")
+		"View to open on: instances, schema, or both. Default: the schema view.")
 	root.AddCommand(cmd)
 }

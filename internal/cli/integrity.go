@@ -349,8 +349,9 @@ func checkHuman(report *integrity.CheckReport) {
 	for _, th := range report.Thin {
 		fmt.Printf("thin %s: %s\n", th.ID(), th.Reason)
 	}
+	// Marked on the failing path too: the gate did not fail because of these.
 	for _, e := range report.Expired {
-		fmt.Println(expiredLine(e))
+		fmt.Printf("%s (informational)\n", expiredLine(e))
 	}
 }
 

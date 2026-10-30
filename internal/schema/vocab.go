@@ -541,6 +541,9 @@ func buildRetentionDecl(v any, loc []string, c *vocabCollector) *RetentionDecl {
 	} else {
 		c.add("missing", at(loc, "days"), msgMissing)
 	}
+	// Lax like every other vocabulary boolean (`required`, `orphan`,
+	// `path_refs`, a relation's `many`): one reading of `yes`/`true` across
+	// the schema. `days` is strict because a string there is a typo.
 	rd.NoOutbound = takeBool(m, "no_outbound", loc, c)
 	addExtras(m, loc, c, "days", "no_outbound")
 	return rd

@@ -10,9 +10,10 @@ Notable changes to khub. Format follows [Keep a Changelog](https://keepachangelo
   is a type's end-of-life rule. `check` lists every entity of the type whose
   `updated` (else `created`) date is more than `N` days old in a new
   `expired` bucket, `{id, type, slug, date, age_days}`; with `no_outbound`,
-  only one that also has no outbound edge. The bucket is informational, like
+  only one that also has no outbound edge. Unlike `stale`, no git date is
+  read: bump `updated` to keep an entity. The bucket is informational, like
   `thin`: it never fails the gate, `--strict` included, and khub deletes
-  nothing. `schema show` prints the rule.
+  nothing. `schema show --format json` prints the rule.
 
 ### Changed
 

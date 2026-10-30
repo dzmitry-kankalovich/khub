@@ -338,8 +338,14 @@ func Check(root string, strict bool, now time.Time) (*CheckReport, error) {
 
 // expiredEntities sweeps every type declaring a policy `retention` rule. Drafts
 // count, as they do for the orphan sweep: an abandoned draft is the likeliest
-// end-of-life candidate of all. An entity with no date, or one that does not
-// parse, is never reported — retention cannot age what it cannot date.
+// end-of-life candidate of all. The date is `updated`, else `created`, the
+// first that parses (project.Age); an entity with neither is never reported.
+//
+// What counts as outbound for `no_outbound` is the graph's out-degree: a
+// stored edge that resolves, to any entity, a draft included, or a path
+// reference to an entity's file. A derived inverse is not stored on this
+// entity and does not count; a self-loop is dropped from the graph; a dangling
+// value or a path reference to a non-entity file is no edge.
 func expiredEntities(resolved *schema.ResolvedSchema, valid *index.Index, g *graph.Graph,
 	nodes []index.Node, now time.Time) []Expired {
 	out := []Expired{}

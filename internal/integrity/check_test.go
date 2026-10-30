@@ -637,3 +637,72 @@ func TestExpiredNeverGates(t *testing.T) {
 		}
 	}
 }
+
+func expiredIDs(r *CheckReport) []string {
+	ids := []string{}
+	for _, e := range r.Expired {
+		ids = append(ids, e.ID())
+	}
+	return ids
+}
+
+// An `updated` that will not parse — date-shaped but impossible, or empty —
+// falls back to `created` rather than hiding the entity from retention.
+func TestRetentionFallsBackPastAnUnparseableUpdated(t *testing.T) {
+	root := cleanWS(t)
+	writeRaw(t, root, ".khub/policy.yaml", "policy:\n  meeting: { retention: { days: 30 } }\n")
+	writeRaw(t, root, "meetings/bad-stamp.md",
+		"---\ntype: meeting\ntitle: Bad\ncreated: 2025-11-01\nupdated: 2025-13-45\n---\n")
+	writeRaw(t, root, "meetings/empty-stamp.md",
+		"---\ntype: meeting\ntitle: Empty\ncreated: 2025-11-01\nupdated: ''\n---\n")
+	writeRaw(t, root, "meetings/no-fallback.md",
+		"---\ntype: meeting\ntitle: None\nupdated: 2025-13-45\n---\n")
+
+	report := mustCheck(t, root, false)
+	want := []Expired{
+		{Type: "meeting", Slug: "bad-stamp", Date: "2025-11-01", AgeDays: 75},
+		{Type: "meeting", Slug: "empty-stamp", Date: "2025-11-01", AgeDays: 75},
+	}
+	if !reflect.DeepEqual(report.Expired, want) {
+		t.Fatalf("expired = %+v, want %+v", report.Expired, want)
+	}
+}
+
+// What `no_outbound` counts: an inbound edge (whose inverse is derived, never
+// stored here) is not outbound, and neither is a self-loop; an edge to a draft
+// is.
+func TestRetentionNoOutboundCountsStoredEdgesOnly(t *testing.T) {
+	root := cleanWS(t)
+	writeRaw(t, root, ".khub/policy.yaml",
+		"policy:\n  meeting: { retention: { days: 30, no_outbound: true } }\n")
+	seed(t, root, "meetings/inbound-only.md", kv{"type", "meeting"}, kv{"title", "In"},
+		kv{"created", "2025-11-01"})
+	seed(t, root, "clients/pointer.md", kv{"type", "client"}, kv{"name", "Pointer"},
+		kv{"created", "2026-01-01"}, kv{"related", []any{"meeting/inbound-only"}})
+	seed(t, root, "meetings/self-loop.md", kv{"type", "meeting"}, kv{"title", "Self"},
+		kv{"created", "2025-11-01"}, kv{"related", []any{"meeting/self-loop"}})
+	seed(t, root, "clients/pending.md", kv{"type", "client"}, kv{"name", "Pending"},
+		kv{"created", "2026-01-01"}, kv{"draft", true})
+	seed(t, root, "meetings/to-draft.md", kv{"type", "meeting"}, kv{"title", "To draft"},
+		kv{"created", "2025-11-01"}, kv{"related", []any{"client/pending"}})
+
+	got := expiredIDs(mustCheck(t, root, false))
+	want := []string{"meeting/inbound-only", "meeting/self-loop"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expired = %v, want %v", got, want)
+	}
+}
+
+// A collection row ages like any entity: its own `created` dates it.
+func TestRetentionSweepsCollectionRows(t *testing.T) {
+	root := collectionWS(t)
+	writeRaw(t, root, ".khub/policy.yaml", "policy:\n  repo: { retention: { days: 30 } }\n")
+	writeRaw(t, root, "knowledge/architecture/repos.yaml",
+		"old-row:\n  repo: acme/old\n  status: archived\n  created: 2025-11-01\n"+
+			"new-row:\n  repo: acme/new\n  status: active\n  created: 2026-01-10\n")
+
+	got := expiredIDs(mustCheck(t, root, false))
+	if !reflect.DeepEqual(got, []string{"repo/old-row"}) {
+		t.Fatalf("expired = %v, want [repo/old-row]", got)
+	}
+}

@@ -129,9 +129,8 @@ func registerInit(root *cobra.Command) {
 						fmt.Printf("preserved %d workspace-owned file(s): %s%s\n",
 							len(result.Preserved), strings.Join(head, ", "), more)
 					}
-					if result.SampleCreated != nil {
-						fmt.Printf("sample: %d files created; run khub check to see one finding per bucket\n",
-							len(result.SampleCreated))
+					if n := len(result.SampleCreated); n > 0 {
+						fmt.Printf("sample: %d files created; run `khub check` to see one finding per bucket\n", n)
 					}
 					if wireStep.Result != nil {
 						for _, outcome := range wireStep.Result.Outcomes {

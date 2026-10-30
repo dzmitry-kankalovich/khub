@@ -1,5 +1,5 @@
 Initialized firm-ops workspace at .
-sample: 15 files created; run khub check to see one finding per bucket
+sample: 15 files created; run `khub check` to see one finding per bucket
 index.md created
 
 Agent skill not installed. To install:

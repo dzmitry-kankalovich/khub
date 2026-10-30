@@ -69,8 +69,8 @@ type InitResult struct {
 	Preserved []string
 	// SampleCreated lists the sample files this run copied in, slash paths
 	// relative to the workspace root; nil when the run was not asked for the
-	// sample. Creations only: a file already there is left alone and not
-	// listed.
+	// sample. --sample needs an empty target, so this is every sample file
+	// but one the scaffold itself created (a singleton), which is kept.
 	SampleCreated []string
 }
 
@@ -167,6 +167,12 @@ func initWorkspace(preset, path string, opt InitOptions) (*InitResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The sample plants check findings, so it never lands beside existing
+	// files — a real corpus, or a workspace whose own storage layer would
+	// scatter it — whatever --force says.
+	if opt.Sample && !empty {
+		return nil, errs.SampleNeedsEmptyTarget(target, preset)
+	}
 	if !empty && !opt.Force {
 		return nil, errs.TargetNotEmpty(target)
 	}
@@ -184,6 +190,12 @@ func initWorkspace(preset, path string, opt InitOptions) (*InitResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	var sampleFiles []string
+	if opt.Sample {
+		if sampleFiles, err = checkSample(preset, source, merged); err != nil {
+			return nil, err
+		}
+	}
 
 	khubDir := pyJoin(target, ".khub")
 	createdKhub := !pathExists(khubDir)
@@ -192,7 +204,7 @@ func initWorkspace(preset, path string, opt InitOptions) (*InitResult, error) {
 	var sampled []string
 	wsName, preserved, err := scaffold(target, khubDir, preset, merged, source, opt, &createdSingletons, &writtenKhub)
 	if err == nil && opt.Sample {
-		err = copySample(target, preset, source, &sampled)
+		err = copySample(target, preset, source, sampleFiles, &sampled)
 	}
 	if err != nil {
 		// Best-effort unwind (not full atomicity — dirs/.gitignore may remain):
@@ -239,17 +251,70 @@ func initWorkspace(preset, path string, opt InitOptions) (*InitResult, error) {
 	}, nil
 }
 
-// copySample copies the preset's sample/ tree into target after the scaffold,
-// byte for byte: the files are entities at the paths the preset's storage
-// layer gives them, so nothing is rendered or resolved here. Creations only,
-// the rule singletons follow — a file already at a sample path is left alone.
-// Each file written is appended to created, as a slash path relative to
-// target, so the caller can list or unwind it.
-func copySample(target, preset string, source fs.FS, created *[]string) error {
+// checkSample lists the preset's sample files and refuses the whole sample,
+// before anything is written, when one of them would land anywhere but an
+// entity tree: a dot-prefixed component (.git/, .claude/, .khub/), a file at
+// the workspace root (CLAUDE.md, AGENTS.md), or a path no type's storage
+// declares. A --preset-source supplies schema data; this keeps its sample to
+// entity data too, never agent instructions or tool config.
+//
+// The storage paths are the resolver's own: the preset's layer files are
+// resolved in a scratch directory, so the target stays untouched on refusal.
+func checkSample(preset string, source fs.FS, merged *flattened) ([]string, error) {
 	files, err := presets.SampleFiles(preset, source)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	for _, rel := range files {
+		parts := strings.Split(rel, "/")
+		if len(parts) < 2 {
+			return nil, errs.UnsafeSamplePath(preset, rel, "a file at the workspace root")
+		}
+		for _, part := range parts {
+			if strings.HasPrefix(part, ".") {
+				return nil, errs.UnsafeSamplePath(preset, rel, "a dot-prefixed path")
+			}
+		}
+	}
+	scratch, err := os.MkdirTemp("", "khub-sample-")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = os.RemoveAll(scratch) }()
+	if err := os.Mkdir(filepath.Join(scratch, ".khub"), 0o777); err != nil {
+		return nil, err
+	}
+	for _, layer := range merged.layers() {
+		text, err := layerBytes(preset, merged.Version, layer.Doc)
+		if err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(filepath.Join(scratch, ".khub", layer.File), []byte(text), 0o666); err != nil {
+			return nil, err
+		}
+	}
+	resolved, err := introspect.LoadSchema(scratch)
+	if err != nil {
+		return nil, err
+	}
+	// upgrade's own test: under a storage root (a directory, or a
+	// singleton's or collection's file). A non-entity under a root is a stray,
+	// which a sample may plant on purpose.
+	for _, rel := range files {
+		if !inStorage(resolved, rel) {
+			return nil, errs.UnsafeSamplePath(preset, rel, "a path no type's storage declares")
+		}
+	}
+	return files, nil
+}
+
+// copySample copies the checked sample files into target after the scaffold,
+// byte for byte. The target was empty, so the only file a sample path can
+// meet is one the scaffold itself just created (a singleton); that file is
+// kept and the sample's copy skipped. Each file written is appended to
+// created, as a slash path relative to target, so the caller can list or
+// unwind it.
+func copySample(target, preset string, source fs.FS, files []string, created *[]string) error {
 	*created = []string{}
 	for _, rel := range files {
 		dest := pyJoin(target, rel)

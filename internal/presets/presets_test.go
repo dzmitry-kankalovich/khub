@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -641,9 +642,17 @@ func TestEmbeddedSampleMatchesTree(t *testing.T) {
 		if !HasSample(name, disk) {
 			continue
 		}
-		want, err := SampleFiles(name, disk)
+		all, err := SampleFiles(name, disk)
 		if err != nil {
 			t.Fatal(err)
+		}
+		// A dot file (a Finder .DS_Store) is never tracked or embedded, and
+		// init refuses a sample path with a dot component anyway.
+		want := []string{}
+		for _, rel := range all {
+			if !strings.HasPrefix(path.Base(rel), ".") {
+				want = append(want, rel)
+			}
 		}
 		got, err := SampleFiles(name, Embedded())
 		if err != nil {

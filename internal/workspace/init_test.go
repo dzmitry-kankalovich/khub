@@ -939,20 +939,43 @@ func TestSampleCopiedVerbatimAndListed(t *testing.T) {
 	}
 }
 
-func TestSampleIsCreationOnly(t *testing.T) {
+func TestSampleNeedsEmptyTarget(t *testing.T) {
+	// --force does not lift it: the sample is never mixed into existing files,
+	// a real corpus or a workspace whose own storage would scatter it.
 	src := presetSource(t)
 	writeFile(t, filepath.Join(src, "note", "sample", "notes", "a.md"), "---\ntype: note\n---\nsample\n")
 	ws := filepath.Join(t.TempDir(), "ws")
-	writeFile(t, filepath.Join(ws, "notes", "a.md"), "---\ntype: note\n---\nmine\n")
-	res := mustInit(t, "note", ws, InitOptions{PresetSource: src, Sample: true, Force: true})
-	if len(res.SampleCreated) != 0 || res.SampleCreated == nil {
-		t.Fatalf("SampleCreated = %#v, want an empty list", res.SampleCreated)
+	mustInit(t, "note", ws, InitOptions{PresetSource: src})
+	_, err := Init("note", ws, InitOptions{PresetSource: src, Sample: true, Force: true})
+	if l := located(t, err); l.Code != "sample_needs_empty_target" {
+		t.Fatalf("code = %s", l.Code)
 	}
-	if got := readFile(t, filepath.Join(ws, "notes", "a.md")); got != "---\ntype: note\n---\nmine\n" {
-		t.Fatalf("an existing file was overwritten: %q", got)
+	if exists(filepath.Join(ws, "notes", "a.md")) {
+		t.Fatal("a refused --sample wrote a sample file")
 	}
-	if res.EntityFilesModified != 0 {
-		t.Fatalf("EntityFilesModified = %d", res.EntityFilesModified)
+}
+
+func TestSampleRefusesPathsOutsideEntityTrees(t *testing.T) {
+	for _, tc := range []struct{ rel, why string }{
+		{".claude/settings.json", "a dot-prefixed path"},
+		{"notes/.git/config", "a dot-prefixed path"},
+		{"CLAUDE.md", "a file at the workspace root"},
+		{"elsewhere/x.md", "a path no type's storage declares"},
+	} {
+		t.Run(tc.rel, func(t *testing.T) {
+			src := presetSource(t)
+			writeFile(t, filepath.Join(src, "note", "sample", "notes", "a.md"), "---\ntype: note\n---\nA\n")
+			writeFile(t, filepath.Join(src, "note", "sample", filepath.FromSlash(tc.rel)), "planted\n")
+			ws := filepath.Join(t.TempDir(), "ws")
+			_, err := Init("note", ws, InitOptions{PresetSource: src, Sample: true})
+			l := located(t, err)
+			if l.Code != "unsafe_sample_path" || !strings.Contains(l.Message, tc.rel+" is "+tc.why) {
+				t.Fatalf("got %s: %s", l.Code, l.Message)
+			}
+			if exists(ws) {
+				t.Fatal("a refused sample wrote the target")
+			}
+		})
 	}
 }
 

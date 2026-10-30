@@ -11,6 +11,6 @@ steps:
 - argv: ["neighbors", "acme-platform", "--format", "json"]
 - argv: ["impact", "acme-data-pipeline", "--format", "json"]
 - argv: ["impact", "acme", "--predicate", "client", "--reverse", "--format", "json"]
-# A re-run is creation-only: every sample file is already there, so none is
-# listed and none is rewritten.
+# A re-run is refused even with --force: the sample only scaffolds into an
+# empty target, so it is never mixed into existing files.
 - argv: ["init", "firm-ops", ".", "--sample", "--force", "--no-wire", "--format", "json"]

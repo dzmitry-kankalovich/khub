@@ -1,1 +1,1 @@
-{"path": ".", "preset": "firm-ops", "version": "0.3.0", "name": "ws", "source": null, "entity_files_modified": 0, "seeded_over_corpus": true, "singletons_created": [], "preserved": [".khub/ontology.yaml", ".khub/policy.yaml", ".khub/storage.yaml", ".khub/config.yaml"], "sample": [], "index": "unchanged", "skill_hint": "npx skills add endgame-build/khub"}
+{"error": {"code": "sample_needs_empty_target", "message": "Target . is not empty. --sample plants check findings, so it only scaffolds into a new or empty directory: khub init firm-ops <new-dir> --sample"}}

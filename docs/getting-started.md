@@ -325,7 +325,7 @@ cycle project/acme-data-pipeline -> project/acme-platform
 
 One finding per bucket: a published deal nobody owns, a team member whose person file is gone, a new hire on no engagement, a scratch file among the meetings, and two projects that each wait on the other. The body of each file involved says why it is there. The clean entities around them give `khub query`, `khub neighbors acme-platform` and `khub impact acme-data-pipeline` something to read. Fix the findings one at a time and watch `check` pass.
 
-The sample's dates are fixed, so after the workspace's `stale_days` its entities read as stale too. A preset without a sample (`build-hub`, today) refuses `--sample` with `no_sample`.
+The sample's dates are fixed, so after the workspace's `stale_days` its entities read as stale too. `--sample` only scaffolds into a new or empty directory, so its planted findings never land in a workspace you already use. A preset without a sample (`build-hub`, today) refuses `--sample` with `no_sample`.
 
 ## Next steps
 

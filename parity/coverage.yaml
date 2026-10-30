@@ -201,6 +201,7 @@ error_codes:
 - preset_mismatch
 - raw_linkml_smuggled
 - referential_integrity
+- sample_needs_empty_target
 - schema_error
 - self_link
 - singleton_exists
@@ -214,6 +215,7 @@ error_codes:
 - unknown_predicate
 - unknown_preset
 - unknown_relation_target
+- unsafe_sample_path
 - unknown_type
 format_specials:
 - json

@@ -140,3 +140,39 @@ func TestCountRefusesWhatHasNoEdges(t *testing.T) {
 		}
 	}
 }
+
+// A relation that is also another relation's declared inverse reaches the same
+// neighbour twice, once each way; the count is of neighbours, not edges.
+func TestCountIsOfDistinctNeighbours(t *testing.T) {
+	ws := wsFromSchema(t, `
+version: "0.1.0"
+ontology:
+  entities:
+    node:
+      relations:
+        parent:   { to: node, inverse: children }
+        children: { to: node, many: true }
+storage:
+  node: { layout: file, path: nodes }
+`)
+	seed(t, ws, "nodes/a.md", kv{"type", "node"}, kv{"title", "A"}, kv{"children", []any{"b", "c"}})
+	seed(t, ws, "nodes/b.md", kv{"type", "node"}, kv{"title", "B"}, kv{"parent", "a"})
+	seed(t, ws, "nodes/c.md", kv{"type", "node"}, kv{"title", "C"})
+	seed(t, ws, "nodes/d.md", kv{"type", "node"}, kv{"title", "D"}, kv{"parent", "a"})
+	got := slugs(mustQuery(t, ws, Filters{Type: ptr("node"), Counts: cnt("children", "=", 3)}))
+	if !eq(got, []string{"a"}) { // b, c, d: b reached both ways counts once
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestDeclaresField(t *testing.T) {
+	ws := countWS(t)
+	for name, want := range map[string]bool{"status": true, "supersedes": true, "count": false} {
+		if got := DeclaresField(ws, name); got != want {
+			t.Errorf("DeclaresField(%q) = %v", name, got)
+		}
+	}
+	if DeclaresField(t.TempDir(), "status") {
+		t.Error("a directory with no schema declares nothing")
+	}
+}

@@ -29,8 +29,8 @@ func registerQuery(root *cobra.Command) {
 	cmd.Flags().StringVar(&tag, "tag", "", "Keep entities carrying this tag.")
 	cmd.Flags().StringVar(&has, "has", "", "Keep entities with a resolvable edge for the predicate.")
 	cmd.Flags().StringVar(&missing, "missing", "", "Keep entities lacking a resolvable edge (gap finder).")
-	cmd.Flags().StringArrayVar(&counts, "count", nil, "Bound the edge count for a relation or inverse: depends_on>=2 (repeatable).")
-	cmd.Flags().StringArrayVar(&inCounts, "in-count", nil, "Bound the inbound edge count: >=5, or 0 for none (repeatable).")
+	cmd.Flags().StringArrayVar(&counts, "count", nil, "Bound the edge count for a relation or inverse: 'depends_on>=2' (repeatable).")
+	cmd.Flags().StringArrayVar(&inCounts, "in-count", nil, "Bound the inbound edge count: '>=5', or 0 for none (repeatable).")
 	cmd.Flags().StringArrayVar(&outCounts, "out-count", nil, "Bound the outbound edge count: 0 finds leaves (repeatable).")
 	cmd.Flags().BoolVar(&orphan, "orphan", false, "Keep only orphan (edge-less) entities.")
 	cmd.Flags().BoolVar(&stale, "stale", false, "Keep only stale entities.")
@@ -113,16 +113,19 @@ func registerQuery(root *cobra.Command) {
 }
 
 // parseCounts reads the cardinality flags. A malformed expression is a usage
-// error (exit 2) naming the flag and the accepted shape.
+// error (exit 2) naming the flag and the accepted shape. Every example in it is
+// shell-quoted: an agent copying `--count depends_on>=2` unquoted would have
+// the shell write a file named `=2`.
 func parseCounts(cmd *cobra.Command, counts, inCounts, outCounts []string) (
 	[]query.Count, []query.Comparison, []query.Comparison, error) {
+	const opsLine = " The op is one of =, !=, <, <=, >, >=; quote a bound that holds < or >."
 	var parsed []query.Count
 	for _, expr := range counts {
 		c, ok := query.ParseCount(expr)
 		if !ok {
 			return nil, nil, nil, clickUsageErr(cmd.CommandPath(), "", fmt.Sprintf(
-				"Invalid value for '--count': '%s' is not <relation><op><n>, as in depends_on>=2. "+
-					"The op is one of =, !=, <, <=, >, >=.", expr))
+				"Invalid value for '--count': '%s' is not <relation><op><n>, as in depends_on=0 or "+
+					"'depends_on>=2'.", expr)+opsLine+shadowedField(cmd, "count"))
 		}
 		parsed = append(parsed, c)
 	}
@@ -132,8 +135,8 @@ func parseCounts(cmd *cobra.Command, counts, inCounts, outCounts []string) (
 			c, ok := query.ParseComparison(expr)
 			if !ok {
 				return nil, clickUsageErr(cmd.CommandPath(), "", fmt.Sprintf(
-					"Invalid value for '--%s': '%s' is not [<op>]<n>, as in >=5 or 0. "+
-						"The op is one of =, !=, <, <=, >, >=.", flag, expr))
+					"Invalid value for '--%s': '%s' is not [<op>]<n>, as in 0 or '>=5'.", flag, expr)+
+					opsLine+shadowedField(cmd, flag))
 			}
 			out = append(out, c)
 		}
@@ -148,4 +151,21 @@ func parseCounts(cmd *cobra.Command, counts, inCounts, outCounts []string) (
 		return nil, nil, nil, err
 	}
 	return parsed, in, out, nil
+}
+
+// shadowedField names the clash when the schema declares a field the flag's
+// own name would otherwise filter (`--count 5` meant for an attribute `count`).
+// A dashed flag leaves the underscore spelling free, so `--in_count 5` still
+// filters a field in_count; `count` has no second spelling. Best effort: with
+// no workspace or schema to read there is nothing to name.
+func shadowedField(cmd *cobra.Command, flag string) string {
+	field := fieldKey(flag)
+	ws, err := resolveRoot()
+	if err != nil || !query.DeclaresField(ws, field) {
+		return ""
+	}
+	if field != flag {
+		return fmt.Sprintf(" To filter the field '%s', write --%s.", field, field)
+	}
+	return fmt.Sprintf(" --%s is the edge-count filter, so query cannot filter the field '%s'.", flag, field)
 }

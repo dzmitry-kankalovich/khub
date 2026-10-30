@@ -6,7 +6,7 @@ package query
 // `--in-count`/`--out-count <op><n>` count every inbound or outbound edge.
 //
 // The counts read the same derived graph `--has`, `--orphan` and `check` read,
-// so `--count x>=1` keeps exactly what `--has x` keeps, `--count x=0` exactly
+// so `--count 'x>=1'` keeps exactly what `--has x` keeps, `--count x=0` exactly
 // what `--missing x` keeps, and `--in-count 0 --out-count 0` exactly the edge-less
 // entities `--orphan` reports before a type's `orphan: true` exemption.
 
@@ -16,6 +16,7 @@ import (
 
 	"github.com/endgame-build/khub/internal/graph"
 	"github.com/endgame-build/khub/internal/index"
+	"github.com/endgame-build/khub/internal/introspect"
 )
 
 // Comparison is one `<op><n>` bound on a count.
@@ -92,26 +93,42 @@ func (c Comparison) Holds(n int) bool {
 	}
 }
 
-// edgeCount counts node's resolved edges answering to name: the stored
-// forward edges under that predicate plus, for a declared inverse, the inbound
-// edges from the relations that declare it. It is zero exactly when hasEdge is
-// false. The graph keeps one edge per (source, target, predicate) and drops
-// self-references, so this is the number of distinct other entities on that
-// edge.
+// edgeCount counts the distinct other entities joined to node under name:
+// targets of the stored forward edges under that predicate, plus, for a
+// declared inverse, the sources of the inbound edges from the relations that
+// declare it. A neighbour reached both ways (a relation that is also the
+// inverse of another) counts once. It is zero exactly when hasEdge is false.
+// The graph drops self-references, so node never counts itself.
 func edgeCount(g *graph.Graph, node index.Node, name string, inverseOf map[inverseSource]bool) int {
-	n := 0
+	seen := map[index.Node]bool{}
 	for _, e := range g.OutEdges(node) {
 		if e.Predicate == name {
-			n++
+			seen[e.To] = true
 		}
 	}
-	if len(inverseOf) == 0 {
-		return n
-	}
-	for _, e := range g.InEdges(node) {
-		if inverseOf[inverseSource{e.From.Type, e.Predicate}] {
-			n++
+	if len(inverseOf) > 0 {
+		for _, e := range g.InEdges(node) {
+			if inverseOf[inverseSource{e.From.Type, e.Predicate}] {
+				seen[e.From] = true
+			}
 		}
 	}
-	return n
+	return len(seen)
+}
+
+// DeclaresField reports whether any type in root's schema declares name as an
+// attribute or a relation. The CLI uses it to name a clash between a query
+// option and a field of the same name.
+func DeclaresField(root, name string) bool {
+	resolved, err := introspect.LoadSchema(root)
+	if err != nil {
+		return false
+	}
+	for _, tname := range resolved.Types.Keys() {
+		rtype, _ := resolved.Types.Get(tname)
+		if rtype.Attributes.Has(name) || rtype.Relations.Has(name) {
+			return true
+		}
+	}
+	return false
 }

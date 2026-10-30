@@ -12,7 +12,12 @@
 # - plain `check` keeps its shape and passes; `check --stale` adds `expired`
 #   (active entities only — the draft is not a finding) and fails the gate;
 # - a hand-written value that is not a datetime fails `validate` and is
-#   surfaced as expired, as an unparseable `updated` is surfaced as stale.
+#   surfaced as expired, as an unparseable `updated` is surfaced as stale;
+# - a YAML 1.1 timestamp with a one-digit month and day reads by its date
+#   (not expired, valid); a day that does not exist (2099-02-30) fails
+#   `validate` and is surfaced as expired, so the two gates agree;
+# - `edit <id> stale_after null` is refused; `edit <id> stale_after ""`
+#   clears it (writes null), and the entity leaves the stale list.
 steps:
 - argv: ["init", "build-hub", ".", "--no-wire"]
 - argv: ["add", "requirement", "--title", "Quarterly", "--kind", "functional", "--stale-after", "2026-01-01"]
@@ -30,3 +35,10 @@ steps:
 - argv: ["stale"]
 - argv: ["status"]
 - argv: ["query", "--stale", "--format", "ids"]
+- sh: "printf -- '---\\ntype: requirement\\ncreated: 2026-01-10\\nupdated: 2026-01-10\\ntitle: Odd\\nkind: functional\\nstale_after: 2099-1-5 10:00:00\\n---\\n' > knowledge/requirements/req-odd.md"
+- sh: "printf -- '---\\ntype: requirement\\ncreated: 2026-01-10\\nupdated: 2026-01-10\\ntitle: Feb\\nkind: functional\\nstale_after: 2099-02-30\\n---\\n' > knowledge/requirements/req-feb.md"
+- argv: ["validate", "requirement/req-odd"]
+- argv: ["validate", "requirement/req-feb"]
+- argv: ["edit", "req-quarterly", "stale_after", "null"]
+- argv: ["edit", "req-quarterly", "stale_after", ""]
+- argv: ["stale"]

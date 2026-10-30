@@ -257,8 +257,8 @@ func checkPayload(report *integrity.CheckReport) *omap.Map {
 	// Present only under `--stale`: the key itself says the expiry gate ran,
 	// so a plain `check` keeps the shape it always had.
 	if report.StaleGate {
-		expired := make([]any, 0, len(report.Expired))
-		for _, e := range report.Expired {
+		expired := make([]any, 0, len(report.StaleAfterExpired))
+		for _, e := range report.StaleAfterExpired {
 			record := omap.New()
 			record.Set("id", e.ID())
 			record.Set("type", e.Type)
@@ -338,7 +338,7 @@ func checkHuman(report *integrity.CheckReport) {
 	for _, c := range report.AliasConflicts {
 		fmt.Printf("alias '%s' names more than one entity: %s\n", c.Alias, strings.Join(c.Claimants, ", "))
 	}
-	for _, e := range report.Expired {
+	for _, e := range report.StaleAfterExpired {
 		fmt.Printf("expired %s: stale_after %s\n", e.ID(), e.StaleAfter)
 	}
 	required := map[string]bool{}

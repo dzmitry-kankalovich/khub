@@ -105,7 +105,8 @@ func Stale(root string, days *int, now time.Time) (*StaleReport, error) {
 			gitDate = &d
 		}
 		eff, source := project.EffectiveDate(meta, gitDate)
-		expired := project.IsExpired(meta, now)
+		rtype, _ := resolved.Types.Get(node.Type)
+		expired := project.IsExpired(rtype, meta, now)
 		var age *int
 		if eff != nil {
 			a := daysBetween(*eff, now)

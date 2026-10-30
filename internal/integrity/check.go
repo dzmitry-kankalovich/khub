@@ -140,23 +140,24 @@ type CheckReport struct {
 	Misplaced []Misplaced
 	// Aliases that name more than one entity. Fails the gate.
 	AliasConflicts []AliasConflict
-	// StaleGate says `check --stale` ran: only then is Expired swept, and only
-	// then does it fail the gate. The age rule never gates — it is a guess
-	// about attention, not a statement about the content.
+	// StaleGate says `check --stale` ran: only then is StaleAfterExpired
+	// swept, and only then does it fail the gate. The age rule never gates —
+	// it is a guess about attention, not a statement about the content.
 	StaleGate bool
-	// Active entities whose authored `stale_after` has passed.
-	Expired []Expired
+	// Active entities whose authored `stale_after` has passed. The JSON
+	// bucket is `expired`.
+	StaleAfterExpired []StaleAfterExpiry
 }
 
-// Expired is one active entity past its authored `stale_after`.
-type Expired struct {
+// StaleAfterExpiry is one active entity past its authored `stale_after`.
+type StaleAfterExpiry struct {
 	Type       string
 	Slug       string
-	StaleAfter string // the value as authored
+	StaleAfter string // the loaded value in its canonical string form (values.Str)
 }
 
-// ID is Expired.id.
-func (e Expired) ID() string { return e.Type + "/" + e.Slug }
+// ID is StaleAfterExpiry.id.
+func (e StaleAfterExpiry) ID() string { return e.Type + "/" + e.Slug }
 
 // Passed is CheckReport.passed.
 func (r *CheckReport) Passed() bool {
@@ -176,7 +177,7 @@ func (r *CheckReport) Passed() bool {
 		len(r.DraftRequiredSingletons) == 0 &&
 		len(r.Misplaced) == 0 &&
 		len(r.AliasConflicts) == 0 &&
-		len(r.Expired) == 0
+		len(r.StaleAfterExpired) == 0
 }
 
 // Check is integrity.check: walk the active subgraph for completeness,
@@ -333,26 +334,27 @@ func Check(root string, strict bool, expiredAt *time.Time) (*CheckReport, error)
 		MissingTemplates:        missingTemplates,
 		AliasConflicts:          aliasConflicts(valid, entityNodes),
 		StaleGate:               expiredAt != nil,
-		Expired:                 expiredEntities(valid, entityNodes, expiredAt),
+		StaleAfterExpired:       staleAfterExpired(valid, entityNodes, expiredAt),
 	}, nil
 }
 
-// expiredEntities is the `check --stale` sweep: active entities past their
+// staleAfterExpired is the `check --stale` sweep: active entities past their
 // authored `stale_after`, judged by project.IsExpired — the same rule `khub
 // stale` and `status` apply. A draft is unpublished, so its expiry is not a
 // finding here, as its incompleteness is not.
-func expiredEntities(valid *index.Index, nodes []index.Node, at *time.Time) []Expired {
-	out := []Expired{}
+func staleAfterExpired(valid *index.Index, nodes []index.Node, at *time.Time) []StaleAfterExpiry {
+	out := []StaleAfterExpiry{}
 	if at == nil {
 		return out
 	}
 	for _, n := range nodes {
 		meta := valid.Meta[n]
-		if values.AsBool(draftFlag(meta)) || !project.IsExpired(meta, *at) {
+		rtype, _ := valid.Resolved.Types.Get(n.Type)
+		if values.AsBool(draftFlag(meta)) || !project.IsExpired(rtype, meta, *at) {
 			continue
 		}
 		raw, _ := meta.Get(project.StaleAfterField)
-		out = append(out, Expired{Type: n.Type, Slug: n.Slug, StaleAfter: values.Str(raw)})
+		out = append(out, StaleAfterExpiry{Type: n.Type, Slug: n.Slug, StaleAfter: values.Str(raw)})
 	}
 	return out
 }

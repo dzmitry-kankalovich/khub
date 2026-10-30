@@ -9,10 +9,11 @@
 // and `limit` — never the output format, which belongs to each run.
 //
 // Writes take the workspace lock and publish atomically like every other
-// mutation. An existing file is spliced, so a hand-written comment survives a
-// save that appends a new name; a change the splice cannot express (replacing
-// a definition whose keys moved) re-emits the whole file through the
-// round-trip profile, which is lossy for comments only.
+// mutation. Only a missing file is emitted whole. An existing file is
+// spliced: a new name is appended, a replaced definition is re-emitted in
+// place as one entry, and every other byte — other entries, their comments
+// and style — survives. A change neither splice can make safely refuses
+// rather than rewriting the file.
 package savedquery
 
 import (
@@ -35,8 +36,12 @@ const File = ".khub/queries.yaml"
 
 const header = "# khub saved queries: `khub query … --save-as <name>` writes one, `khub run <name>` replays it.\n"
 
-// namePattern keeps a name a plain YAML key and a plain shell word.
+// namePattern keeps a name a plain shell word and a YAML key that needs no
+// quoting, once the scalars YAML 1.1 reads as a boolean or null are refused
+// (ambiguousNames): a name reads the same to khub and to any other tool.
 var namePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
+
+var ambiguousNames = []string{"null", "true", "false", "yes", "no", "on", "off", "y", "n"}
 
 // The boolean scopes a definition may carry. Like every flag name, none can be
 // a field filter's key: the declared flag binds first on the command line.
@@ -167,13 +172,18 @@ func Save(root, name string, def *omap.Map, replace bool) (Outcome, error) {
 		return "", errs.New("invalid_query_name", fmt.Sprintf(
 			"Cannot save a query as '%s': a name is lowercase letters, digits, '-' and '_', starting with a letter", name))
 	}
+	if contains(ambiguousNames, name) {
+		return "", errs.New("invalid_query_name", fmt.Sprintf(
+			"Cannot save a query as '%s': YAML reads it as a boolean or null; choose another name", name))
+	}
 	return fsio.Locked(root, func() (Outcome, error) {
 		old, store, err := read(root)
 		if err != nil {
 			return "", err
 		}
 		outcome := Saved
-		if have, ok := store.Get(name); ok {
+		have, existed := store.Get(name)
+		if existed {
 			same, err := sameDefinition(have, def)
 			if err != nil {
 				return "", err
@@ -189,7 +199,7 @@ func Save(root, name string, def *omap.Map, replace bool) (Outcome, error) {
 			outcome = Replaced
 		}
 		store.Set(name, def)
-		text, err := render(old, store)
+		text, err := render(old, store, name, existed)
 		if err != nil {
 			return "", err
 		}
@@ -211,8 +221,11 @@ func read(root string) (string, *omap.Map, error) {
 	}
 	text := canon.NormalizeNewlines(string(raw))
 	store, nonMap, err := canon.LoadDocMap(text, canon.Mode12)
-	if err != nil || nonMap != nil {
-		return "", nil, invalidStore("it is not a mapping of query names to definitions")
+	if err != nil {
+		return "", nil, invalidStore(err.Error())
+	}
+	if nonMap != nil {
+		return "", nil, invalidStore("its top level is not a mapping of query names to definitions")
 	}
 	for _, k := range store.Keys() {
 		v, _ := store.Get(k)
@@ -223,23 +236,31 @@ func read(root string) (string, *omap.Map, error) {
 	return text, store, nil
 }
 
-// render splices the new store into the old text so its comments survive,
-// and re-emits the whole file when the splice cannot express the change.
-func render(old string, store *omap.Map) (string, error) {
-	if old != "" {
-		out, err := canon.SpliceMapping([]byte(old), store, canon.Mode12)
-		if err == nil {
-			return string(out), nil
-		}
-		if !errors.Is(err, canon.ErrNoSplice) {
+// render writes the store. A missing file is emitted whole. An existing one
+// is spliced so every byte the save need not touch survives: a new name is
+// appended, a replaced definition is re-emitted in place as one entry. A
+// change neither can make safely refuses; nothing is written.
+func render(old string, store *omap.Map, name string, existed bool) (string, error) {
+	if old == "" {
+		text, err := canon.DumpRT(store)
+		if err != nil {
 			return "", err
 		}
+		return header + text, nil
 	}
-	text, err := canon.DumpRT(store)
+	out, err := canon.SpliceMapping([]byte(old), store, canon.Mode12)
+	if errors.Is(err, canon.ErrNoSplice) && existed {
+		out, err = canon.ReplaceEntry([]byte(old), store, name, canon.Mode12)
+	}
+	if errors.Is(err, canon.ErrNoSplice) {
+		return "", errs.New("saved_query_unspliceable", fmt.Sprintf(
+			"Cannot save query '%s' without rewriting the rest of %s (its layout, an anchor or an alias "+
+				"stands in the way); nothing was written. Edit the file by hand", name, File))
+	}
 	if err != nil {
 		return "", err
 	}
-	return header + text, nil
+	return string(out), nil
 }
 
 // sameDefinition compares two definitions as the store would write them, so
@@ -284,4 +305,22 @@ func unknownQuery(name string, saved []string) *errs.Located {
 	}
 	return errs.New("unknown_saved_query", fmt.Sprintf(
 		"No saved query '%s' in %s. Saved queries: %s", name, File, strings.Join(saved, ", ")))
+}
+
+// Outdated turns a refusal from running a saved definition into one that
+// names the saved query and the fix, when the refusal is the schema no longer
+// declaring a name the definition uses (a dropped type or field). The code is
+// kept, so a caller matching on it sees what `khub query` would report. Any
+// other error passes through unchanged.
+func Outdated(name string, err error) error {
+	var located *errs.Located
+	if !errors.As(err, &located) || (located.Code != "unknown_type" && located.Code != "filter_error") {
+		return err
+	}
+	return &errs.Located{
+		Code: located.Code,
+		Message: fmt.Sprintf("Saved query '%s' no longer fits the schema: %s. Save it again with "+
+			"`khub query … --save-as %s --replace`, or edit %s", name, located.Message, name, File),
+		Type: located.Type, Relation: located.Relation, Target: located.Target,
+	}
 }

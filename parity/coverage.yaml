@@ -208,6 +208,7 @@ error_codes:
 - raw_linkml_smuggled
 - referential_integrity
 - saved_query_exists
+- saved_query_unspliceable
 - schema_error
 - self_link
 - singleton_exists

@@ -34,7 +34,7 @@ func registerRun(root *cobra.Command) {
 				}
 				matches, err := query.Query(ws, filters, today())
 				if err != nil {
-					return err
+					return savedquery.Outdated(args[0], err)
 				}
 				return emitMatches(matches, format)
 			})

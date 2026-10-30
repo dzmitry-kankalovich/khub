@@ -118,7 +118,7 @@ func TestSaveKeepsHandComments(t *testing.T) {
 
 func TestRefusals(t *testing.T) {
 	root := workspace(t)
-	for _, name := range []string{"", "Bad", "1st", "a b", "-x", "a/b"} {
+	for _, name := range []string{"", "Bad", "1st", "a b", "-x", "a/b", "null", "true", "no", "off", "y"} {
 		if _, err := Save(root, name, omap.New(), false); code(err) != "invalid_query_name" {
 			t.Errorf("name %q: %v", name, err)
 		}
@@ -128,7 +128,7 @@ func TestRefusals(t *testing.T) {
 		t.Errorf("empty store: %v", err)
 	}
 	path := filepath.Join(root, ".khub", "queries.yaml")
-	for _, text := range []string{"- a\n", "q: scalar\n", "q: [a]\n"} {
+	for _, text := range []string{"- a\n", "q: scalar\n", "q: [a]\n", "q: [\n"} {
 		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -181,5 +181,93 @@ func TestConcurrentSavesAllLand(t *testing.T) {
 	}
 	if store.Len() != 16 {
 		t.Fatalf("%d of 16 saves landed: %v", store.Len(), store.Keys())
+	}
+}
+
+// Replacing one definition whose keys changed re-emits that entry alone, in
+// place: comments on the entries around it, their flow style, and the comment
+// lines between entries all survive byte for byte.
+func TestReplaceKeepsOtherEntries(t *testing.T) {
+	root := workspace(t)
+	hand := "# team queries\n" +
+		"first:  # keep me\n  type: component\n  # inner note\n  kind: service\n" +
+		"\n# about mine\n" +
+		"mine:  # goes with the entry\n  type: component\n  # gone too\n  tag: infra\n" +
+		"\n# about last\n" +
+		"last: {type: api, limit: 2}  # flow kept\n"
+	if err := os.WriteFile(filepath.Join(root, ".khub", "queries.yaml"), []byte(hand), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	limit := 4
+	def := Definition(query.Filters{Type: str("api"), ActiveOnly: true, Limit: &limit})
+	if got, err := Save(root, "mine", def, true); err != nil || got != Replaced {
+		t.Fatalf("replace: %v %v", got, err)
+	}
+	want := "# team queries\n" +
+		"first:  # keep me\n  type: component\n  # inner note\n  kind: service\n" +
+		"\n# about mine\n" +
+		"mine:\n  type: api\n  active: true\n  limit: 4\n" +
+		"\n# about last\n" +
+		"last: {type: api, limit: 2}  # flow kept\n"
+	if got := storeText(t, root); got != want {
+		t.Fatalf("store:\n%s\nwant:\n%s", got, want)
+	}
+	// The last entry, replaced, keeps the comment trailing it.
+	if err := os.WriteFile(filepath.Join(root, ".khub", "queries.yaml"), []byte(want+"# end\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Save(root, "last", Definition(query.Filters{Tag: str("x")}), true); err != nil {
+		t.Fatal(err)
+	}
+	if got, w := storeText(t, root), strings.Replace(want, "last: {type: api, limit: 2}  # flow kept\n", "last:\n  tag: x\n", 1)+"# end\n"; got != w {
+		t.Fatalf("store:\n%s\nwant:\n%s", got, w)
+	}
+}
+
+// A save that cannot leave the rest of the file as it was refuses and writes
+// nothing, rather than re-emitting the whole file.
+func TestUnspliceableRefuses(t *testing.T) {
+	root := workspace(t)
+	path := filepath.Join(root, ".khub", "queries.yaml")
+	for _, tc := range []struct{ text, name string }{
+		{"a: &x\n  type: component\nb: *x\n", "a"},     // b aliases the replaced entry
+		{"{a: {type: component}}\n", "b"},              // flow root: nothing to append to
+		{"{a: {type: component}, b: {tag: t}}\n", "a"}, // flow root: no entry lines
+	} {
+		if err := os.WriteFile(path, []byte(tc.text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Save(root, tc.name, Definition(query.Filters{Type: str("api"), Stale: true}), true)
+		if code(err) != "saved_query_unspliceable" {
+			t.Errorf("%q: %v", tc.text, err)
+		}
+		if got, _ := os.ReadFile(path); string(got) != tc.text {
+			t.Errorf("%q was rewritten to %q", tc.text, got)
+		}
+	}
+}
+
+func TestUnreadableStoreNamesTheParseError(t *testing.T) {
+	root := workspace(t)
+	if err := os.WriteFile(filepath.Join(root, ".khub", "queries.yaml"), []byte("a: [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(root)
+	if code(err) != "invalid_saved_query" || !strings.Contains(err.Error(), "[1:4]") {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestOutdatedNamesTheQueryAndTheFix(t *testing.T) {
+	err := Outdated("mine", errs.UnknownType("gone", "build-hub", []string{"api"}))
+	var located *errs.Located
+	if !errors.As(err, &located) || located.Code != "unknown_type" ||
+		!strings.HasPrefix(located.Message, "Saved query 'mine' no longer fits the schema: No type 'gone'") ||
+		!strings.Contains(located.Message, "--save-as mine --replace") {
+		t.Fatalf("%v", err)
+	}
+	other := errs.New("malformed_entity", "x")
+	if got := Outdated("mine", other); got.Error() != "x" {
+		t.Fatal("an unrelated refusal was rewritten")
 	}
 }

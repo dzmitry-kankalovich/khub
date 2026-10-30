@@ -255,6 +255,9 @@ Usage: khub run [OPTIONS] {name}
 
 Run a saved query: khub run open-prospects --format json.
 
+Arguments:
+  name <str>  A name saved with khub query --save-as. [required]
+
 Options:
   --format <str>  text (Rich table on a TTY), json, or ids. [default: text]
   --help  Show this message and exit.

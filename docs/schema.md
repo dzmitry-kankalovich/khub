@@ -7,7 +7,7 @@ A schema is authored in khub's own YAML vocabulary, split across three layer fil
 | File | Layer | Carries |
 |---|---|---|
 | `ontology.yaml` | the domain | per-type `attributes`, `relations`, `when` |
-| `policy.yaml` | this workspace's gates | `required`, `orphan`, `path_refs` |
+| `policy.yaml` | this workspace's gates | `required`, `orphan`, `path_refs`, `retention` |
 | `storage.yaml` | where bytes land | `layout`, `path`, `format`, `id_prefix`, `id_date`, `id_ordinal`, `template` |
 
 `khub init` copies a preset's three files into `.khub/`; you edit them directly, and they carry no runtime tie to the hub. The three reunite at load time into one resolved contract every command reads — the layers merge on their **top-level keys** (`ontology:` / `policy:` / `storage:`), never on filenames, so one file carrying all three blocks resolves identically (useful for fixtures; three files is the canonical layout). Ontology declares which types exist; policy and storage only annotate them, and an entry for a type ontology never declared is a resolve error. See [`concepts.md`](concepts.md) for why the schema is the contract.
@@ -117,6 +117,12 @@ Per type, keyed by the type's name — what `check` demands of it in *this* work
 - `required` — singleton-only: `check` reports a missing required singleton (e.g. a workspace without its `prd.md`).
 - `orphan` — `orphan: true` declares that edge-less is this type's *expected* state, so `check` stops reporting its entities as orphans, `--strict` stops failing on them, `query --orphan` stops flagging them and the `status` count stops including them. Default `false`. Use it for a narrative root nothing points at by design: build-hub declares it on its two narrative singletons (`prd`, `arc42`), because every stored edge in that preset points *up* the durability ladder and the documents sit above its top — so orphan-ness there is a finding no authoring could ever close, and without the flag `check --strict` could not go green on a correct workspace. Unlike `required` this is **not** singleton-only: any type whose members are legitimately unwired may declare it, and a singleton that *does* carry relations is still swept. It removes no signal — a missing required edge is still reported by required-completeness, which names the field.
 - `path_refs` — `path_refs: true` lets this type's relation values name a workspace file by its path (`sources: [system/prd.md]`), for a corpus whose documents cite each other by path. A value that resolves as an id still does; one that does not is read as a workspace-relative path, an `#anchor` and a leading `./` dropped. If it is an entity's file, it is an edge to that entity, subject to the relation's targets. Otherwise, on a `to: any` relation, any existing file or directory satisfies it without an edge (`manifest.yaml`, `docs/guide.md`). A path to nothing dangles, and a write naming one is refused, as for an id.
+- `retention` — `retention: { days: N, no_outbound: true }` is this type's end-of-life rule. `check` lists in `expired` every entity of the type whose effective date — `updated`, else `created`, the date staleness reads — is more than `N` days old; with `no_outbound: true`, only one that also has no outbound edge (an edge that does not resolve is no edge). `days` is required and at least 1; `no_outbound` defaults to `false`. Drafts are swept too, as for orphans; an entity with no date is never reported. The bucket is informational, `--strict` included: the clock alone moves an entity into it, and a gate that turned red with no change to the workspace would fail every CI run the day a meeting turned `N` days old. khub never deletes anything — `expired` is a list for a human to act on, with `khub remove`. `khub schema show <type>` prints the rule.
+
+  ```yaml
+  policy:
+    meeting: { retention: { days: 90, no_outbound: true } }   # a meeting that recorded nothing, after a quarter
+  ```
 
 ## Capture cues (`when`)
 

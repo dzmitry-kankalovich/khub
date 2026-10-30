@@ -589,3 +589,51 @@ func TestMisplacedExpectedUsesStorageRelpathForPathlessTypes(t *testing.T) {
 		t.Fatalf("misplaced = %+v, want %+v", got, want)
 	}
 }
+
+// Policy `retention`: an entity whose effective date (`updated`, else
+// `created`) is more than `days` old is expired; under `no_outbound` only one
+// with no outbound edge. Undated entities, types with no rule and the exact
+// boundary day are never reported, and the bucket never fails the gate.
+func TestRetentionReportsExpired(t *testing.T) {
+	root := cleanWS(t)
+	writeRaw(t, root, ".khub/policy.yaml",
+		"policy:\n  meeting: { retention: { days: 30, no_outbound: true } }\n")
+	seed(t, root, "meetings/lonely.md", kv{"type", "meeting"}, kv{"title", "Lonely"},
+		kv{"created", "2025-11-01"})
+	seed(t, root, "meetings/linked.md", kv{"type", "meeting"}, kv{"title", "Linked"},
+		kv{"created", "2025-11-01"}, kv{"engagement", "initech-pov"})
+	seed(t, root, "meetings/boundary.md", kv{"type", "meeting"}, kv{"title", "Boundary"},
+		kv{"created", "2025-12-16"})
+	seed(t, root, "meetings/touched.md", kv{"type", "meeting"}, kv{"title", "Touched"},
+		kv{"created", "2025-01-01"}, kv{"updated", "2026-01-10"})
+	seed(t, root, "meetings/undated.md", kv{"type", "meeting"}, kv{"title", "Undated"})
+	seed(t, root, "clients/ancient.md", kv{"type", "client"}, kv{"name", "Ancient"},
+		kv{"created", "2020-01-01"})
+
+	report := mustCheck(t, root, false)
+	want := []Expired{{Type: "meeting", Slug: "lonely", Date: "2025-11-01", AgeDays: 75}}
+	if !reflect.DeepEqual(report.Expired, want) {
+		t.Fatalf("expired = %+v, want %+v", report.Expired, want)
+	}
+
+	// Without no_outbound, a linked meeting ages out too.
+	writeRaw(t, root, ".khub/policy.yaml", "policy:\n  meeting: { retention: { days: 30 } }\n")
+	var ids []string
+	for _, e := range mustCheck(t, root, false).Expired {
+		ids = append(ids, e.ID())
+	}
+	if !reflect.DeepEqual(ids, []string{"meeting/linked", "meeting/lonely"}) {
+		t.Errorf("expired = %v, want [meeting/linked meeting/lonely]", ids)
+	}
+}
+
+// Expired is informational under both gates: the clock alone moves an entity
+// into it, so it must never turn `check` red.
+func TestExpiredNeverGates(t *testing.T) {
+	for _, strict := range []bool{false, true} {
+		r := &CheckReport{Strict: strict, Expired: []Expired{{Type: "meeting", Slug: "old"}}}
+		if !r.Passed() {
+			t.Errorf("strict=%v: an expired entity failed the gate", strict)
+		}
+	}
+}

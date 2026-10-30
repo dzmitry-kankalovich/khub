@@ -183,6 +183,18 @@ func IsStale(meta *omap.Map, now time.Time, staleDays int, gitDate *time.Time) b
 	return date == nil || daysBetween(civil(now), *date) > staleDays
 }
 
+// Age is how many whole days old an entity is by its effective date — the
+// date staleness reads, without the git fallback. ok is false when the entity
+// carries no date or one that does not parse: retention never reports an
+// entity it cannot date (validate already reports the unparseable value).
+func Age(meta *omap.Map, now time.Time) (date time.Time, days int, ok bool) {
+	d, _ := EffectiveDate(meta, nil)
+	if d == nil {
+		return time.Time{}, 0, false
+	}
+	return *d, daysBetween(civil(now), *d), true
+}
+
 // civil normalizes a time to its calendar date at UTC midnight, so day
 // differences are exact (Python compares date objects, never instants).
 func civil(t time.Time) time.Time {

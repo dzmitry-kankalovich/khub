@@ -58,7 +58,7 @@ func registerCheck(root *cobra.Command) {
 				if err != nil {
 					return err
 				}
-				report, err := integrity.Check(ws, strict)
+				report, err := integrity.Check(ws, strict, today())
 				if err != nil {
 					return err
 				}
@@ -249,9 +249,22 @@ func checkPayload(report *integrity.CheckReport) *omap.Map {
 	payload.Set("alias_conflicts", conflicts)
 	// Say which gate ran: `orphans` populated with passed=true means default mode.
 	payload.Set("strict", report.Strict)
-	// Last, after `strict`: the one bucket that never affects `passed`. A body
+	// Last, after `strict`: the two buckets that never affect `passed`. A body
 	// whose prose does not satisfy a section rule is that document, unfinished.
 	payload.Set("thin", findingRecords(report.Thin, false))
+	// Entities past their type's policy `retention` rule: candidates for
+	// removal, which khub reports and never acts on.
+	expired := make([]any, 0, len(report.Expired))
+	for _, e := range report.Expired {
+		record := omap.New()
+		record.Set("id", e.ID())
+		record.Set("type", e.Type)
+		record.Set("slug", e.Slug)
+		record.Set("date", e.Date)
+		record.Set("age_days", e.AgeDays)
+		expired = append(expired, record)
+	}
+	payload.Set("expired", expired)
 	return payload
 }
 
@@ -268,6 +281,9 @@ func checkHuman(report *integrity.CheckReport) {
 		// Informational is not the same as invisible.
 		for _, th := range report.Thin {
 			fmt.Printf("thin %s: %s (informational)\n", th.ID(), th.Reason)
+		}
+		for _, e := range report.Expired {
+			fmt.Printf("%s (informational)\n", expiredLine(e))
 		}
 		fmt.Println("Graph check passed")
 		return
@@ -333,4 +349,12 @@ func checkHuman(report *integrity.CheckReport) {
 	for _, th := range report.Thin {
 		fmt.Printf("thin %s: %s\n", th.ID(), th.Reason)
 	}
+	for _, e := range report.Expired {
+		fmt.Println(expiredLine(e))
+	}
+}
+
+// expiredLine is one retention finding as `check` prints it.
+func expiredLine(e integrity.Expired) string {
+	return fmt.Sprintf("expired %s: dated %s, %d days old, past its type's retention", e.ID(), e.Date, e.AgeDays)
 }

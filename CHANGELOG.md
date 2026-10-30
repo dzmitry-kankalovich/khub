@@ -2,6 +2,23 @@
 
 Notable changes to khub. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); khub is pre-release.
 
+## [Unreleased]
+
+### Added
+
+- **Retention policy.** Policy `retention: { days: N, no_outbound: true }`
+  is a type's end-of-life rule. `check` lists every entity of the type whose
+  `updated` (else `created`) date is more than `N` days old in a new
+  `expired` bucket, `{id, type, slug, date, age_days}`; with `no_outbound`,
+  only one that also has no outbound edge. The bucket is informational, like
+  `thin`: it never fails the gate, `--strict` included, and khub deletes
+  nothing. `schema show` prints the rule.
+
+### Changed
+
+- `check --format json` always carries the `expired` key, last, after `thin`.
+  The plugin counts it as informational (plugin 0.1.5).
+
 ## [0.30.0] — 2026-10-28
 
 Storage can now follow a hub's existing nesting, relations can point to files

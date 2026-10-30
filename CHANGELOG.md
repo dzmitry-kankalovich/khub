@@ -2,6 +2,21 @@
 
 Notable changes to khub. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); khub is pre-release.
 
+## [Unreleased]
+
+### Added
+
+- **Cardinality filters on `query`.** `--count <relation><op><n>` keeps an
+  entity by how many resolved edges it has under one relation or declared
+  inverse (`--count depends_on>=2`, `--count superseded=0`);
+  `--in-count` and `--out-count` take `<op><n>` (or a bare `n`) over every
+  inbound or outbound edge, so `--out-count 0` finds leaves and
+  `--in-count '>=5'` the hubs. The op is one of `=`, `!=`, `<`, `<=`, `>`,
+  `>=`; each flag repeats and every bound ANDs. The counts read the graph
+  `--has`, `--missing` and `--orphan` read. A name with no edges (an
+  attribute, a typo) refuses as `filter_error`; a malformed bound is a usage
+  error.
+
 ## [0.30.0] — 2026-10-28
 
 Storage can now follow a hub's existing nesting, relations can point to files

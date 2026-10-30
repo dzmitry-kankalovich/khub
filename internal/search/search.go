@@ -57,8 +57,14 @@ const (
 		"fts5(title, body, type UNINDEXED, slug UNINDEXED, path UNINDEXED)"
 	insertFTS = "INSERT INTO fts VALUES (?,?,?,?,?)"
 	matchFTS  = "SELECT type, slug, title, rank AS score, " +
-		"snippet(fts, -1, '', '', '…', 12) AS snip, path, rowid " +
-		"FROM fts WHERE fts MATCH ? ORDER BY rank LIMIT ?"
+		"snippet(fts, -1, '', '', '…', 12) AS snip, path, rowid, " +
+		sectionCols + " FROM fts WHERE fts MATCH ? ORDER BY rank LIMIT ?"
+	// sectionCols locate the reported snippet in the body (see section):
+	// the title's and the body's own snippets, to tell which column
+	// snippet(-1) chose, then the body snippet and the whole body with
+	// every match marked. They only read the row; rank is untouched.
+	sectionCols = "snippet(fts, 0, '', '', '…', 12), snippet(fts, 1, '', '', '…', 12), " +
+		"snippet(fts, 1, char(1), char(2), '', 12), highlight(fts, 1, char(1), char(2))"
 	countFTS = "SELECT count(*) FROM fts WHERE fts MATCH ?"
 )
 
@@ -77,6 +83,9 @@ type Hit struct {
 	Snippet string
 	Path    string
 	Locator string // "" when not a collection row
+	// Section is the heading path to the snippet when it excerpts the
+	// body's Markdown under a heading; nil otherwise (see section).
+	Section []string
 	Out     []EdgeCount
 	In      []EdgeCount
 
@@ -87,6 +96,13 @@ type Hit struct {
 	TitleMatch float64
 
 	rowid int64
+	loc   snippetLoc
+}
+
+// snippetLoc is what match reads to place a hit's snippet in its body.
+type snippetLoc struct {
+	titleSnip, bodySnip string // snippet() of the title, of the body
+	marked, highlighted string // the body snippet, and the whole body, with matches marked
 }
 
 // Result is one search's hits plus what a caller needs to judge them.
@@ -152,7 +168,8 @@ func Search(root, text string, opts Options) (Result, error) {
 	defer func() { _ = conn.Close() }() // Python's finally: conn.close() ignores errors
 
 	res := Result{Hits: []Hit{}, Malformed: len(idx.Malformed)}
-	if res.Searched, err = buildFTS(conn, root, idx, type_); err != nil {
+	bodyEnds := map[index.Node]int{}
+	if res.Searched, err = buildFTS(conn, root, idx, type_, bodyEnds); err != nil {
 		return Result{}, err
 	}
 	var terms []string
@@ -182,6 +199,8 @@ func Search(root, text string, opts Options) (Result, error) {
 		if ok && rtype.Storage.Layout == schema.LayoutCollection {
 			hits[i].Locator = hits[i].Path + "#" + hits[i].Slug
 		}
+		hits[i].Section = section(hits[i].Snippet, hits[i].loc,
+			bodyEnds[index.Node{Type: hits[i].Type, Slug: hits[i].Slug}])
 	}
 	if len(hits) > 0 {
 		annotate(hits, idx, opts.Now, staleDays)
@@ -336,7 +355,10 @@ func annotate(hits []Hit, idx *index.Index, now time.Time, staleDays int) {
 // scale. type_ prunes at build time: with exactly one query per in-memory build,
 // skipping the row loop beats a WHERE clause. Titles and bodies come from the
 // scan (index.BuildWithBodies), so no file is read or parsed twice.
-func buildFTS(conn *sqlite3.Conn, root string, idx *index.Index, type_ *string) (int, error) {
+//
+// bodyEnds receives, per entity, where its body ends in the indexed body
+// column: FTSBody appends the frontmatter's string values after it.
+func buildFTS(conn *sqlite3.Conn, root string, idx *index.Index, type_ *string, bodyEnds map[index.Node]int) (int, error) {
 	// The Python build either has FTS5 compiled in or it does not; here the
 	// extension is loaded per connection, so a load failure is the same
 	// "no FTS5 in this build" condition and takes the same located error.
@@ -384,11 +406,14 @@ func buildFTS(conn *sqlite3.Conn, root string, idx *index.Index, type_ *string) 
 		// agent finds them. Removed rather than blanked: this text is what
 		// snippet() renders back, and a blanked scaffold's snippet is mostly
 		// empty columns.
-		if err := insertRow(stmt, ftsTitle(meta, node.Slug),
-			canon.FTSBody(meta, template.StripComments(idx.Body[node])),
+		body := template.StripComments(idx.Body[node])
+		if err := insertRow(stmt, ftsTitle(meta, node.Slug), canon.FTSBody(meta, body),
 			node.Type, node.Slug, filepath.ToSlash(rel)); err != nil {
 			return 0, err
 		}
+		// FTSBody trims the joined text, so the body starts at its first
+		// non-space; its trailing space, if kept, is harmless to section.
+		bodyEnds[node] = len(strings.TrimLeftFunc(body, unicode.IsSpace))
 		rows++
 	}
 	return rows, conn.Exec("COMMIT")
@@ -484,6 +509,12 @@ func match(conn *sqlite3.Conn, text string, limit int) ([]Hit, error) {
 			Snippet: stmt.ColumnText(4),
 			Path:    stmt.ColumnText(5),
 			rowid:   stmt.ColumnInt64(6),
+			loc: snippetLoc{
+				titleSnip:   stmt.ColumnText(7),
+				bodySnip:    stmt.ColumnText(8),
+				marked:      stmt.ColumnText(9),
+				highlighted: stmt.ColumnText(10),
+			},
 		})
 	}
 	if err := stmt.Err(); err != nil {
@@ -511,4 +542,131 @@ func sqliteDetail(err error) string {
 		return msg[i+2:]
 	}
 	return msg
+}
+
+// Markers section asks snippet() and highlight() to put around each match.
+const markOpen, markClose = "\x01", "\x02"
+
+// section returns the heading path to the text a hit's snippet excerpts:
+// the Markdown ATX headings enclosing the snippet's first match in the
+// body, outermost first. It is nil when the snippet excerpts the title (a
+// tie between title and body goes to the title, as snippet() breaks it),
+// when that match falls in the frontmatter values indexed after the body,
+// or when no heading precedes it.
+//
+// The section follows the snippet, so the two always agree and ranking is
+// untouched. bodyEnd is where the body ends in the indexed column.
+func section(snippet string, loc snippetLoc, bodyEnd int) []string {
+	if snippet != loc.bodySnip || snippet == loc.titleSnip {
+		return nil
+	}
+	hl := loc.highlighted
+	start := 0
+	if loc.marked != "" {
+		if i := strings.Index(hl, loc.marked); i >= 0 {
+			start = i
+		}
+	}
+	at := strings.Index(hl[start:], markOpen)
+	if at < 0 {
+		return nil
+	}
+	at += start
+	// The column's own text: hl without its markers. at moves back by the
+	// marker bytes before it.
+	before := hl[:at]
+	offset := at - len(markOpen)*strings.Count(before, markOpen) -
+		len(markClose)*strings.Count(before, markClose)
+	text := strings.NewReplacer(markOpen, "", markClose, "").Replace(hl)
+	bodyEnd = min(bodyEnd, len(text))
+	if offset >= bodyEnd {
+		return nil
+	}
+	return headingPath(text[:bodyEnd], offset)
+}
+
+// headingPath returns the ATX headings that enclose byte offset in a
+// Markdown text, outermost first. A line inside a fenced code block is
+// never a heading. Setext headings (a line underlined by === or ---) are
+// not read: "---" is also a thematic break.
+func headingPath(text string, offset int) []string {
+	type heading struct {
+		level int
+		title string
+	}
+	var stack []heading
+	var fence string // the open fence's run of ` or ~; "" outside a fence
+	for pos := 0; pos <= offset && pos < len(text); {
+		end := strings.IndexByte(text[pos:], '\n')
+		if end < 0 {
+			end = len(text)
+		} else {
+			end += pos
+		}
+		line := strings.TrimRight(text[pos:end], "\r")
+		pos = end + 1
+		indent := len(line) - len(strings.TrimLeft(line, " "))
+		if indent > 3 {
+			continue
+		}
+		trimmed := line[indent:]
+		if run := fenceRun(trimmed); fence != "" {
+			if run != "" && run[0] == fence[0] && len(run) >= len(fence) &&
+				strings.TrimSpace(trimmed[len(run):]) == "" {
+				fence = ""
+			}
+			continue
+		} else if run != "" {
+			fence = run
+			continue
+		}
+		level, title, ok := atxHeading(trimmed)
+		if !ok {
+			continue
+		}
+		for len(stack) > 0 && stack[len(stack)-1].level >= level {
+			stack = stack[:len(stack)-1]
+		}
+		stack = append(stack, heading{level, title})
+	}
+	if len(stack) == 0 {
+		return nil
+	}
+	path := make([]string, len(stack))
+	for i, h := range stack {
+		path[i] = h.title
+	}
+	return path
+}
+
+// fenceRun returns the run of three or more backticks or tildes that opens
+// line, or "".
+func fenceRun(line string) string {
+	if line == "" || (line[0] != '`' && line[0] != '~') {
+		return ""
+	}
+	n := len(line) - len(strings.TrimLeft(line, line[:1]))
+	if n < 3 {
+		return ""
+	}
+	return line[:n]
+}
+
+// atxHeading reads "# Title", "## Title ##" and the like: one to six #,
+// then a space or the line's end. The closing run of # is dropped.
+func atxHeading(line string) (level int, title string, ok bool) {
+	level = len(line) - len(strings.TrimLeft(line, "#"))
+	if level < 1 || level > 6 {
+		return 0, "", false
+	}
+	rest := line[level:]
+	if rest != "" && rest[0] != ' ' && rest[0] != '\t' {
+		return 0, "", false
+	}
+	rest = strings.TrimSpace(rest)
+	if closed := strings.TrimRight(rest, "#"); closed != rest &&
+		(closed == "" || strings.HasSuffix(closed, " ") || strings.HasSuffix(closed, "\t")) {
+		rest = strings.TrimSpace(closed)
+	}
+	return level, rest, true
 }

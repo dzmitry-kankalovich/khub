@@ -1,0 +1,3 @@
+requirement/req-found: type
+Left stray knowledge/requirements/req-prose.md: no frontmatter to stamp
+Left stray knowledge/requirements/req-wrong.md: type is 'adr', the layout holds 'requirement'

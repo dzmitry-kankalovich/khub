@@ -2,6 +2,18 @@
 
 Notable changes to khub. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); khub is pre-release.
 
+## [Unreleased]
+
+### Added
+
+- **`backfill --infer-type`.** A stray whose frontmatter has no `type` is
+  stamped with the one type whose layout holds it, and is then an ordinary
+  entity for `validate` and `check`. It covers `file`, `folder` and `singleton`
+  layouts. A file with no frontmatter, a file naming another type and a
+  collection row stay strays, and the run lists each with its reason.
+  `--dry-run` previews the stamp. The khub skill in the Claude Code plugin
+  (0.1.5) points agents at it.
+
 ## [0.30.0] — 2026-10-28
 
 Storage can now follow a hub's existing nesting, relations can point to files

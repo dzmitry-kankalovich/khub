@@ -7,12 +7,18 @@
 // absent, so an authored value is never overwritten (PRJ-003). A collection
 // type is skipped and reported — a shared file's commit dates are not per-row
 // dates.
+//
+// With inferType, a stray whose frontmatter lacks `type` is stamped with the
+// one type whose layout holds it, and then backfilled like any other entity.
+// Not a port: Python had no such option.
 package backfill
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/endgame-build/khub/internal/canon"
 	"github.com/endgame-build/khub/internal/entity"
@@ -31,7 +37,14 @@ import (
 const (
 	SourceGit      = "git log"
 	SourceScaffold = "type schema"
+	SourceLayout   = "storage layout"
 )
+
+// Stray is a stray file --infer-type left alone, and why.
+type Stray struct {
+	Path   string // workspace-relative, slash-separated
+	Reason string
+}
 
 // BackfillChange is backfill.BackfillChange: one additive write — which
 // entity, which field, the value, and where it came from.
@@ -57,6 +70,10 @@ type BackfillReport struct {
 	GitAvailable       bool
 	DryRun             bool
 	SkippedCollections []string
+	// InferType is whether strays were considered at all; Strays the ones
+	// still strays after the run, in path order.
+	InferType bool
+	Strays    []Stray
 }
 
 // DatedEntities is BackfillReport.dated_entities: distinct entities that
@@ -66,6 +83,9 @@ func (r *BackfillReport) DatedEntities() int { return r.distinct(SourceGit) }
 // ScaffoldedEntities is BackfillReport.scaffolded_entities: distinct entities
 // that received type scaffolding.
 func (r *BackfillReport) ScaffoldedEntities() int { return r.distinct(SourceScaffold) }
+
+// StampedEntities is the number of strays that received an inferred `type`.
+func (r *BackfillReport) StampedEntities() int { return r.distinct(SourceLayout) }
 
 func (r *BackfillReport) distinct(source string) int {
 	seen := map[index.Node]bool{}
@@ -82,14 +102,15 @@ func (r *BackfillReport) distinct(source string) int {
 //
 // typeName is Python's `type_: str | None` — a nil pointer is the absent
 // option, and an explicitly empty string is a type name no schema declares
-// (which fails loudly, exactly as in Python).
-func Backfill(root string, typeName *string, dryRun bool) (*BackfillReport, error) {
+// (which fails loudly, exactly as in Python). inferType stamps `type` on the
+// strays whose layout names one type (see inferTypes).
+func Backfill(root string, typeName *string, inferType, dryRun bool) (*BackfillReport, error) {
 	if dryRun {
-		return backfill(root, typeName, true)
+		return backfill(root, typeName, inferType, true)
 	}
-	return fsio.Locked(root, func() (*BackfillReport, error) { return backfill(root, typeName, false) })
+	return fsio.Locked(root, func() (*BackfillReport, error) { return backfill(root, typeName, inferType, false) })
 }
-func backfill(root string, typeName *string, dryRun bool) (*BackfillReport, error) {
+func backfill(root string, typeName *string, inferType, dryRun bool) (*BackfillReport, error) {
 	resolved, err := introspect.LoadSchema(root)
 	if err != nil {
 		return nil, err
@@ -101,6 +122,13 @@ func backfill(root string, typeName *string, dryRun bool) (*BackfillReport, erro
 	scanned, err := index.Build(root, resolved)
 	if err != nil {
 		return nil, err
+	}
+	var stamped map[index.Node]bool
+	var left []Stray
+	if inferType {
+		if stamped, left, err = inferTypes(root, scanned); err != nil {
+			return nil, err
+		}
 	}
 	idx := index.Filter(scanned, index.StrayNodes(scanned)) // strays are not entities
 	gitOK, err := gitlog.HasGitHistory(root)
@@ -142,7 +170,7 @@ func backfill(root string, typeName *string, dryRun bool) (*BackfillReport, erro
 		meta := idx.Meta[node]
 		path := entity.EntityPath(root, idx, node)
 		scaffold := typeName != nil && *typeName == node.Type
-		adds := additions(rtype, meta, scaffold, dates[paths[node]])
+		adds := additions(rtype, meta, scaffold, stamped[node], dates[paths[node]])
 		if len(adds.order) == 0 {
 			continue
 		}
@@ -164,7 +192,100 @@ func backfill(root string, typeName *string, dryRun bool) (*BackfillReport, erro
 		GitAvailable:       gitOK,
 		DryRun:             dryRun,
 		SkippedCollections: sortedKeys(skipped),
+		InferType:          inferType,
+		Strays:             left,
 	}, nil
+}
+
+// inferTypes decides, for every stray in the scan, whether its `type` can be
+// inferred, and stamps the inferable ones in the scan's frontmatter so they
+// are entities for the rest of the run. The file is written later, with the
+// dates, by apply.
+//
+// A stray is inferable when exactly one type's layout holds its file and the
+// file's frontmatter has no `type` (or a null one). It is left, and reported,
+// when its `type` names something else (a disagreement is not a gap to fill),
+// when it has no frontmatter to stamp (adopting a foreign file is a different
+// verb), when more than one type claims its path, or when it is a collection
+// row. A row without `type` already reads as its collection's type, so only a
+// row with another type, or an explicit null one, is a stray at all.
+func inferTypes(root string, scanned *index.Index) (map[index.Node]bool, []Stray, error) {
+	strays := index.StrayNodes(scanned)
+	claims := map[string][]string{} // path -> the types whose scan read it
+	paths := map[index.Node]string{}
+	for _, node := range scanned.Order {
+		rel, err := filepath.Rel(root, entity.EntityPath(root, scanned, node))
+		if err != nil {
+			return nil, nil, err
+		}
+		rel = filepath.ToSlash(rel)
+		paths[node] = rel
+		if rtype, _ := scanned.Resolved.Types.Get(node.Type); rtype.Storage.Layout != schema.LayoutCollection {
+			claims[rel] = append(claims[rel], node.Type)
+		}
+	}
+	stamped := map[index.Node]bool{}
+	left := []Stray{}
+	for _, node := range sortedStrays(strays) {
+		rel := paths[node]
+		rtype, _ := scanned.Resolved.Types.Get(node.Type)
+		meta := scanned.Meta[node]
+		if rtype.Storage.Layout == schema.LayoutCollection {
+			rel += "#" + node.Slug
+		}
+		reason, err := strayReason(root, rel, rtype, meta, claims[paths[node]])
+		if err != nil {
+			return nil, nil, err
+		}
+		if reason != "" {
+			left = append(left, Stray{Path: rel, Reason: reason})
+			continue
+		}
+		meta.Set("type", node.Type)
+		stamped[node] = true
+	}
+	sort.SliceStable(left, func(i, j int) bool { return left[i].Path < left[j].Path })
+	return stamped, left, nil
+}
+
+// strayReason is why one stray cannot be stamped, or "" when it can.
+func strayReason(root, rel string, rtype *schema.ResolvedType, meta *omap.Map, claimants []string) (string, error) {
+	if t, has := meta.Get("type"); has && t != nil {
+		return fmt.Sprintf("type is %s, the layout holds %s", pyRepr(values.Str(t)), pyRepr(rtype.Name)), nil
+	}
+	if rtype.Storage.Layout == schema.LayoutCollection {
+		// Only a row with an explicit `type: null` gets here; date backfill
+		// skips collections, and so does the stamp.
+		return "a collection row; write its type by hand", nil
+	}
+	if len(claimants) > 1 {
+		return "claimed by more than one type (" + strings.Join(claimants, ", ") + ")", nil
+	}
+	if rtype.Storage.Fmt == "md" {
+		// The edit altitude is what apply reads: a file the scan read as
+		// fenceless (or whose fence only the loose scan accepts) has no
+		// frontmatter to add a key to.
+		text, err := canon.ReadTextIn(root, filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			return "", err
+		}
+		if _, _, err := canon.ReadDoc(text, "md"); err != nil {
+			return "no frontmatter to stamp", nil
+		}
+	}
+	return "", nil
+}
+
+// pyRepr quotes a name the way khub's other messages do: 'x'.
+func pyRepr(s string) string { return "'" + s + "'" }
+
+func sortedStrays(set map[index.Node]bool) []index.Node {
+	out := make([]index.Node, 0, len(set))
+	for n := range set {
+		out = append(out, n)
+	}
+	index.SortNodes(out)
+	return out
 }
 
 // addition is one entry of `_additions`' `field -> (value, source)` map.
@@ -192,8 +313,11 @@ func (s *additionSet) has(field string) bool { _, ok := s.byField[field]; return
 // additions is backfill._additions: the absent fields to write for one entity.
 // Dates come first from git; scaffolding then covers any required key still
 // absent (including created/updated when git could not supply them).
-func additions(rtype *schema.ResolvedType, meta *omap.Map, scaffold bool, dates gitlog.Dates) *additionSet {
+func additions(rtype *schema.ResolvedType, meta *omap.Map, scaffold, stamp bool, dates gitlog.Dates) *additionSet {
 	adds := &additionSet{byField: map[string]addition{}}
+	if stamp {
+		adds.set("type", rtype.Name, SourceLayout)
+	}
 	if absent(meta, "created") && !dates.First.IsZero() {
 		adds.set("created", canon.Date{ISO: dates.First.Format("2006-01-02")}, SourceGit)
 	}

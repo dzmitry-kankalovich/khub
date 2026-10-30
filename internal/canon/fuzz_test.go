@@ -176,6 +176,16 @@ func FuzzSpliceIdempotent(f *testing.F) {
 func FuzzEmitRoundTrip(f *testing.F) {
 	seedField(f, "../../parity/corpus/emit-cases.jsonl", "rt")
 	seedField(f, "../../parity/corpus/emit-cases.jsonl", "safe")
+	// Issue #80: the three fold hazards, as the documents khub now writes.
+	for _, v := range []string{issue80Double, issue80Plain, issue80Spaces} {
+		doc := omap.New()
+		doc.Set("description", v)
+		for _, p := range profiles {
+			if text, err := p.fn(doc); err == nil {
+				f.Add(text)
+			}
+		}
+	}
 	f.Fuzz(func(t *testing.T, text string) {
 		// Known loader gap, found by this target: goccy treats U+2028, U+2029
 		// and U+0085 inside a quoted scalar as YAML 1.1 line breaks and folds
@@ -205,6 +215,9 @@ func FuzzEmitRoundTrip(f *testing.F) {
 			again, err := LoadDoc(first)
 			if err != nil {
 				t.Fatalf("%s: emitter output does not parse: %v\n%s", name, err, first)
+			}
+			if !equalValue(v, again) {
+				t.Fatalf("%s: value moved through emit → load for %q:\n--- emitted\n%s", name, text, first)
 			}
 			second, err := dump(again)
 			if err != nil {

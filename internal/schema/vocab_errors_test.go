@@ -171,6 +171,19 @@ storage:
 			wantMsg:  "Invalid schema at policy.a.waive.x.orphans: String should have at least 1 character",
 		},
 		{
+			name:     "a null waiver key is refused, not read as an empty slug",
+			doc:      matrixBase + "  entities:\n    a: {}\npolicy:\n  a: { waive: { null: { orphans: r } } }\n",
+			wantCode: "invalid_schema",
+			wantMsg: "Invalid schema at policy.a.waive: Value error, a waiver names an entity by its slug, " +
+				"and a key here is empty; quote a key YAML reads as null, a number or a boolean",
+		},
+		{
+			name:     "a waived entity names at least one finding",
+			doc:      matrixBase + "  entities:\n    a: {}\npolicy:\n  a: { waive: { x: {} } }\n",
+			wantCode: "invalid_schema",
+			wantMsg:  "Invalid schema at policy.a.waive.x: Dictionary should have at least 1 item after validation, not 0",
+		},
+		{
 			name: "an ontology error beats a later storage error",
 			doc: matrixBase + `  entities:
     a: { when: 42 }

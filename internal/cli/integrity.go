@@ -245,6 +245,7 @@ func checkPayload(report *integrity.CheckReport) *omap.Map {
 		record.Set("slug", w.Slug)
 		record.Set("finding", w.Finding)
 		record.Set("reason", w.Reason)
+		record.Set("cause", w.Cause)
 		stale = append(stale, record)
 	}
 	payload.Set("stale_waivers", stale)
@@ -385,7 +386,11 @@ func checkHuman(report *integrity.CheckReport) {
 		fmt.Printf("alias '%s' names more than one entity: %s\n", c.Alias, strings.Join(c.Claimants, ", "))
 	}
 	for _, w := range report.StaleWaivers {
-		fmt.Printf("stale waiver %s %s: matches no finding — remove it from policy.yaml\n", w.Finding, w.ID())
+		why := "matches no finding"
+		if w.Cause == integrity.StaleOrphanExempt {
+			why = fmt.Sprintf("type '%s' declares orphan: true, so it never has an orphan", w.Type)
+		}
+		fmt.Printf("stale waiver %s %s: %s — remove it from policy.yaml\n", w.Finding, w.ID(), why)
 	}
 	required := map[string]bool{}
 	for _, name := range report.DraftRequiredSingletons {

@@ -353,6 +353,12 @@ const (
 	msgTooShort  = "String should have at least 1 character"
 )
 
+// The waive-specific messages (khub's own, not pydantic's catalog).
+const (
+	msgWaiveSlug  = "Value error, a waiver names an entity by its slug, and a key here is empty; quote a key YAML reads as null, a number or a boolean"
+	msgWaiveEmpty = "Dictionary should have at least 1 item after validation, not 0"
+)
+
 func msgModel(name string) string {
 	return "Input should be a valid dictionary or instance of " + name
 }
@@ -534,9 +540,20 @@ func takeWaivers(m *omap.Map, loc []string, c *vocabCollector) []Waiver {
 	for _, slug := range wm.Keys() {
 		ev, _ := wm.Get(slug)
 		el := at(wl, slug)
+		// A plain `null:` or `~:` key loads as "" — no entity has that slug.
+		// The YAML resolver has already turned other non-string keys into
+		// text by now (`0x10:` is "16"); those surface as stale waivers.
+		if strings.TrimSpace(slug) == "" {
+			c.add("value_error", wl, msgWaiveSlug)
+			continue
+		}
 		em, isEntryMap := ev.(*omap.Map)
 		if !isEntryMap {
 			c.add("dict_type", el, msgDict)
+			continue
+		}
+		if em.Len() == 0 {
+			c.add("too_short", el, msgWaiveEmpty)
 			continue
 		}
 		for _, finding := range em.Keys() {

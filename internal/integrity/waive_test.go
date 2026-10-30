@@ -172,3 +172,44 @@ func TestBodyFindingsWaive(t *testing.T) {
 		t.Errorf("waived = %v, want %v", got, want)
 	}
 }
+
+// Drafting an entity must not move the gate. Drafts are exempt from
+// required-completeness, so an `incomplete` waiver on a draft matches nothing
+// — and is dormant, not stale, until the entity is published again.
+func TestIncompleteWaiverIsDormantWhileTheEntityIsADraft(t *testing.T) {
+	root := cleanWS(t)
+	create(t, root, "project", "loose", "client", "initech")
+	writeRaw(t, root, ".khub/policy.yaml",
+		"policy:\n  project:\n    waive:\n      loose:\n        incomplete: Owner is being hired.\n")
+	published := mustCheck(t, root, false)
+	if !published.Passed() || len(published.Waived) != 1 {
+		t.Fatalf("published: passed=%v waived=%v stale=%v", published.Passed(), published.Waived, published.StaleWaivers)
+	}
+	update(t, root, "project/loose", "draft", "true")
+	drafted := mustCheck(t, root, false)
+	if !drafted.Passed() || len(drafted.StaleWaivers) != 0 || len(drafted.Waived) != 0 {
+		t.Fatalf("drafted: passed=%v waived=%v stale=%v", drafted.Passed(), drafted.Waived, drafted.StaleWaivers)
+	}
+	// Dormancy is for the draft's own completeness only: a waiver naming an
+	// entity that does not exist is stale whatever the bucket.
+	writeRaw(t, root, ".khub/policy.yaml",
+		"policy:\n  project:\n    waive:\n      nobody:\n        incomplete: Gone.\n")
+	if r := mustCheck(t, root, false); r.Passed() || len(r.StaleWaivers) != 1 {
+		t.Fatalf("missing entity: passed=%v stale=%v", r.Passed(), r.StaleWaivers)
+	}
+}
+
+// An orphans waiver on an `orphan: true` type can never match; the stale row
+// says so rather than "matches no finding".
+func TestOrphanWaiverOnExemptTypeSaysWhy(t *testing.T) {
+	root := wsFor(t, "build-hub")
+	writeRaw(t, root, ".khub/policy.yaml",
+		"policy:\n  prd: { required: true, orphan: true }\n  arc42:\n    orphan: true\n    waive:\n      arc42: { orphans: Narrative root. }\n")
+	report := mustCheck(t, root, false)
+	if len(report.StaleWaivers) != 1 || report.StaleWaivers[0].Cause != StaleOrphanExempt {
+		t.Fatalf("stale = %+v", report.StaleWaivers)
+	}
+	if report.Passed() {
+		t.Error("a stale waiver passed the gate")
+	}
+}

@@ -161,13 +161,22 @@ type Waived struct {
 // ID is Waived.id.
 func (w Waived) ID() string { return w.Type + "/" + w.Slug }
 
-// StaleWaiver is a policy waiver that matched no finding.
+// StaleWaiver is a policy waiver that matched no finding. Cause says why:
+// StaleNoMatch, or StaleOrphanExempt for an `orphans` waiver on a type that
+// declares `orphan: true` and so never has one.
 type StaleWaiver struct {
 	Type    string
 	Slug    string
 	Finding string
 	Reason  string
+	Cause   string
 }
+
+// StaleWaiver causes.
+const (
+	StaleNoMatch      = "no_match"
+	StaleOrphanExempt = "orphan_exempt"
+)
 
 // ID is StaleWaiver.id.
 func (w StaleWaiver) ID() string { return w.Type + "/" + w.Slug }
@@ -343,7 +352,7 @@ func Check(root string, strict bool) (*CheckReport, error) {
 		MissingTemplates:        missingTemplates,
 		AliasConflicts:          aliasConflicts(valid, entityNodes),
 	}
-	applyWaivers(resolved, report)
+	applyWaivers(resolved, valid, report)
 	return report, nil
 }
 
@@ -354,7 +363,16 @@ func Check(root string, strict bool) (*CheckReport, error) {
 // holds, every body finding. Matching runs regardless of --strict — an orphan
 // is an orphan whether or not the gate counts it, so its waiver is never
 // stale for want of the flag.
-func applyWaivers(resolved *schema.ResolvedSchema, r *CheckReport) {
+//
+// An `incomplete` waiver on an entity that is present but a draft is dormant:
+// neither matched nor stale. Drafts are exempt from required-completeness, so
+// the finding cannot arise while the entity is unpublished — and a draft
+// toggle alone must not move the gate, in either direction: drafting the
+// entity would otherwise fail check on a stale waiver, and deleting the
+// waiver to clear that would fail it again on re-publish. `incomplete` is the
+// only waivable bucket that skips drafts; orphans, dangling edges and body
+// findings are reported for drafts too.
+func applyWaivers(resolved *schema.ResolvedSchema, valid *index.Index, r *CheckReport) {
 	type key struct{ typ, slug, finding string }
 	reasons := map[key]string{}
 	for _, tname := range resolved.Types.Keys() {
@@ -390,13 +408,23 @@ func applyWaivers(resolved *schema.ResolvedSchema, r *CheckReport) {
 	r.BodyShape = keep(r.BodyShape, func(e FieldError) bool { return !waive("body_shape", e.Type, e.Slug, e) })
 	r.Thin = keep(r.Thin, func(e FieldError) bool { return !waive("thin", e.Type, e.Slug, e) })
 
+	// Ontology declaration order, then the order the waivers were written.
 	for _, tname := range resolved.Types.Keys() {
 		rtype, _ := resolved.Types.Get(tname)
 		for _, w := range rtype.Waivers {
-			if !matched[key{tname, w.Slug, w.Finding}] {
-				r.StaleWaivers = append(r.StaleWaivers,
-					StaleWaiver{Type: tname, Slug: w.Slug, Finding: w.Finding, Reason: w.Reason})
+			if matched[key{tname, w.Slug, w.Finding}] {
+				continue
 			}
+			node := index.Node{Type: tname, Slug: w.Slug}
+			if w.Finding == "incomplete" && valid.Nodes[node] && values.AsBool(draftFlag(valid.Meta[node])) {
+				continue // dormant while the entity is a draft
+			}
+			cause := StaleNoMatch
+			if w.Finding == "orphans" && rtype.Orphan {
+				cause = StaleOrphanExempt
+			}
+			r.StaleWaivers = append(r.StaleWaivers,
+				StaleWaiver{Type: tname, Slug: w.Slug, Finding: w.Finding, Reason: w.Reason, Cause: cause})
 		}
 	}
 }

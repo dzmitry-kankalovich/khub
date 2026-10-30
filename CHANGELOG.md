@@ -13,7 +13,9 @@ Notable changes to khub. Format follows [Keep a Changelog](https://keepachangelo
   Fused records carry `fused` (higher is better) and per-group `ranks` in
   place of `score`; ties break on type then slug, and group order never
   changes the result. `--plain` applies per group, and the `note:` lines
-  report on the fused set. One text is unchanged.
+  report on the fused set; when every text is one bare word, a note says
+  the shell probably split an unquoted query and gives the quoted form.
+  One text is unchanged.
 
 ## [0.30.0] — 2026-10-28
 

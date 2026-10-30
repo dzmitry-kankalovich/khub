@@ -605,3 +605,44 @@ func TestSearchGroupsPlainAndErrors(t *testing.T) {
 		t.Fatalf("bad group: %v", err)
 	}
 }
+
+// Hits a group scores identically share a rank, so identical entities fuse
+// to identical scores and order by slug; a text given twice counts twice;
+// a plain text cut at the word cap is reported by its position.
+func TestSearchGroupsSharedRanksDuplicatesAndCaps(t *testing.T) {
+	ws := freshWS(t)
+	for _, slug := range []string{"zeta", "alpha"} {
+		seedRaw(t, ws, "clients/"+slug+".md",
+			"---\ntype: client\nname: Twin\ncreated: 2026-06-01\n---\nidentical twin prose.\n")
+	}
+	res, err := SearchGroups(ws, []string{"twin", "prose"}, Options{Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := hitSlugs(res.Hits); !eq(got, []string{"alpha", "zeta"}) {
+		t.Fatalf("order: %v", got)
+	}
+	for _, h := range res.Hits {
+		if !reflect.DeepEqual(h.Ranks, []int{1, 1}) || h.Fused != 2.0/(FuseK+1) {
+			t.Fatalf("tied hits must share rank 1: %+v", h)
+		}
+	}
+	dup, err := SearchGroups(ws, []string{"twin", "twin"}, Options{Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dup.Hits[0].Fused != 2.0/(FuseK+1) {
+		t.Fatalf("a repeated text counts twice: %v", dup.Hits[0].Fused)
+	}
+	long := ""
+	for i := 0; i < MaxPlainTerms+1; i++ {
+		long += fmt.Sprintf("word%03d ", i)
+	}
+	capped, err := SearchGroups(ws, []string{"twin", long}, Options{Limit: 20, Plain: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(capped.CappedGroups, []int{2}) || capped.Capped {
+		t.Fatalf("capped groups: %v %v", capped.CappedGroups, capped.Capped)
+	}
+}

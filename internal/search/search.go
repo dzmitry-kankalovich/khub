@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -103,6 +104,10 @@ type Result struct {
 	Searched  int  // entities indexed, after the type filter
 	Malformed int  // files in the workspace the scan could not parse
 	Capped    bool // a plain query held more than MaxPlainTerms words
+
+	// CappedGroups, for a search of several texts, lists the 1-based
+	// positions of the plain texts that held more than MaxPlainTerms words.
+	CappedGroups []int
 }
 
 // EdgeCount is how many edges one predicate carries at a hit. Only non-zero
@@ -200,7 +205,7 @@ func SearchGroups(root string, texts []string, opts Options) (Result, error) {
 			}
 		}
 	} else {
-		if found, res.Total, terms, res.Capped, err = fuse(conn, texts, opts.Plain, capped); err != nil {
+		if found, res.Total, terms, res.CappedGroups, err = fuse(conn, texts, opts.Plain, capped); err != nil {
 			return Result{}, err
 		}
 	}
@@ -225,14 +230,19 @@ func SearchGroups(root string, texts []string, opts Options) (Result, error) {
 // fuse ranks every group over the whole corpus and merges the rankings by
 // reciprocal rank fusion. It returns the best limit hits, how many entities
 // any group matched, the plain terms of every group (distinct and sorted, for
-// matchShares), and whether any plain group was cut at MaxPlainTerms.
+// matchShares), and the 1-based positions, in the order given, of the plain
+// groups cut at MaxPlainTerms.
 //
-// Groups run in sorted text order and a fused score sums its terms from the
-// best rank down, so neither the order of the groups nor floating-point
-// summation order can move a hit. A hit's snippet and Score come from the
-// group that ranked it best (ties: the lesser text).
+// A group's rank is competition ranking over its BM25 score: hits with the
+// same score share the better rank, so identical entities fuse to identical
+// scores. The fused score is summed and compared as an exact rational, so two
+// hits whose sums are equal tie exactly and break on type then slug, and
+// neither group order nor float rounding can move a hit. Groups run in
+// sorted text order; a hit's snippet and Score come from the group that
+// ranked it best (ties: the text that sorts first). A text given twice
+// counts twice.
 func fuse(conn *sqlite3.Conn, texts []string, plain bool, limit int) (
-	hits []Hit, total int, terms []string, capped bool, err error) {
+	hits []Hit, total int, terms []string, cappedGroups []int, err error) {
 	order := make([]int, len(texts))
 	for i := range order {
 		order[i] = i
@@ -250,7 +260,9 @@ func fuse(conn *sqlite3.Conn, texts []string, plain bool, limit int) (
 		expr := texts[g]
 		if plain {
 			groupTerms, groupCapped := plainTerms(expr)
-			capped = capped || groupCapped
+			if groupCapped {
+				cappedGroups = append(cappedGroups, g+1)
+			}
 			if len(groupTerms) == 0 {
 				continue // no words to look for in this group
 			}
@@ -264,10 +276,13 @@ func fuse(conn *sqlite3.Conn, texts []string, plain bool, limit int) (
 		}
 		ranked, merr := match(conn, expr, -1)
 		if merr != nil {
-			return nil, 0, nil, false, merr
+			return nil, 0, nil, nil, merr
 		}
+		rank := 0
 		for i, h := range ranked {
-			rank := i + 1
+			if i == 0 || h.Score != ranked[i-1].Score {
+				rank = i + 1
+			}
 			e, ok := byRow[h.rowid]
 			if !ok {
 				h.Ranks = make([]int, len(texts))
@@ -283,36 +298,45 @@ func fuse(conn *sqlite3.Conn, texts []string, plain bool, limit int) (
 		}
 	}
 	sort.Strings(terms)
+	sort.Ints(cappedGroups)
 
 	hits = make([]Hit, 0, len(rows))
+	exact := make([]*big.Rat, 0, len(rows))
 	for _, row := range rows {
 		h := byRow[row].hit
-		ranks := make([]int, 0, len(h.Ranks))
+		sum := new(big.Rat)
 		for _, r := range h.Ranks {
 			if r > 0 {
-				ranks = append(ranks, r)
+				sum.Add(sum, big.NewRat(1, int64(FuseK+r)))
 			}
 		}
-		sort.Ints(ranks)
-		for _, r := range ranks {
-			h.Fused += 1 / float64(FuseK+r)
-		}
+		h.Fused, _ = sum.Float64()
 		hits = append(hits, h)
+		exact = append(exact, sum)
 	}
-	sort.Slice(hits, func(a, b int) bool {
-		if hits[a].Fused != hits[b].Fused {
-			return hits[a].Fused > hits[b].Fused
+	idx := make([]int, len(hits))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.Slice(idx, func(a, b int) bool {
+		ha, hb := hits[idx[a]], hits[idx[b]]
+		if c := exact[idx[a]].Cmp(exact[idx[b]]); c != 0 {
+			return c > 0
 		}
-		if hits[a].Type != hits[b].Type {
-			return hits[a].Type < hits[b].Type
+		if ha.Type != hb.Type {
+			return ha.Type < hb.Type
 		}
-		return hits[a].Slug < hits[b].Slug
+		return ha.Slug < hb.Slug
 	})
-	total = len(hits)
-	if len(hits) > limit {
-		hits = hits[:limit]
+	sorted := make([]Hit, 0, len(hits))
+	for _, i := range idx {
+		sorted = append(sorted, hits[i])
 	}
-	return hits, total, terms, capped, nil
+	total = len(sorted)
+	if len(sorted) > limit {
+		sorted = sorted[:limit]
+	}
+	return sorted, total, terms, cappedGroups, nil
 }
 
 // matchShares sets each hit's Match and TitleMatch. A word weighs

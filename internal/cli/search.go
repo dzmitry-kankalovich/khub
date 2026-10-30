@@ -7,7 +7,9 @@ package cli
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
@@ -34,7 +36,7 @@ func registerSearch(root *cobra.Command) {
 				if err != nil {
 					return err
 				}
-				if note := searchNote(res, plain); note != "" {
+				if note := searchNote(res, plain, args); note != "" {
 					Note(note)
 				}
 				hits := res.Hits
@@ -101,12 +103,17 @@ func registerSearch(root *cobra.Command) {
 }
 
 // searchNote is the advisory line for a result an agent should not take at
-// face value: rows the limit dropped, no match at all, files the scan could
-// not parse, or a plain query cut short. "" when there is nothing to say.
-// One or two hits is often an exact answer, so only zero counts as thin;
-// match and title_match judge a weak hit under --plain.
-func searchNote(res search.Result, plain bool) string {
+// face value: several bare words fused as separate texts, rows the limit
+// dropped, no match at all, files the scan could not parse, or a plain query
+// cut short. "" when there is nothing to say. One or two hits is often an
+// exact answer, so only zero counts as thin; match and title_match judge a
+// weak hit under --plain.
+func searchNote(res search.Result, plain bool, texts []string) string {
 	var parts []string
+	if unquotedWords(texts) {
+		parts = append(parts, fmt.Sprintf("searched %d texts as separate groups and fused them; "+
+			"quote \"%s\" to search it as one text", len(texts), strings.Join(texts, " ")))
+	}
 	if dropped := res.Total - len(res.Hits); dropped > 0 {
 		parts = append(parts, fmt.Sprintf("showing %d of %d hits; pass --limit %d for all",
 			len(res.Hits), res.Total, res.Total))
@@ -126,7 +133,39 @@ func searchNote(res search.Result, plain bool) string {
 	if res.Capped {
 		parts = append(parts, fmt.Sprintf("the query was cut to its first %d distinct words", search.MaxPlainTerms))
 	}
+	if n := len(res.CappedGroups); n > 0 {
+		which := make([]string, n)
+		for i, g := range res.CappedGroups {
+			which[i] = strconv.Itoa(g)
+		}
+		noun, verb, their := "text", "was", "its"
+		if n > 1 {
+			noun, verb, their = "texts", "were", "their"
+		}
+		parts = append(parts, fmt.Sprintf("%s %s %s cut to %s first %d distinct words",
+			noun, strings.Join(which, ", "), verb, their, search.MaxPlainTerms))
+	}
 	return strings.Join(parts, "; ")
+}
+
+// unquotedWords reports a search of several texts that are each one bare
+// word: most likely a multi-word query the shell split because it was not
+// quoted, which fusion would silently turn into a union of single words.
+func unquotedWords(texts []string) bool {
+	if len(texts) < 2 {
+		return false
+	}
+	for _, t := range texts {
+		if t == "" {
+			return false
+		}
+		for _, r := range t {
+			if !unicode.In(r, unicode.L, unicode.N, unicode.M) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // edgeCounts renders a hit's per-predicate edge counts as one JSON object.

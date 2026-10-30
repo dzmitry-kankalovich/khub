@@ -2,6 +2,19 @@
 
 Notable changes to khub. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); khub is pre-release.
 
+## [Unreleased]
+
+### Fixed
+
+- **Long values round-trip.** A long frontmatter or collection value that
+  khub wraps across lines reads back exactly as written (#80). Three folds
+  changed the text: a double-quoted break right after an escaped backslash
+  added a space (a Windows path gained one), a plain break after two spaces
+  dropped one, and `get` read a plain value with a doubled space at each fold
+  after a line starting with `-`. A file an older khub already wrote with the
+  first shape holds the extra space in its bytes; editing the value again
+  rewrites it.
+
 ## [0.30.0] — 2026-10-28
 
 Storage can now follow a hub's existing nesting, relations can point to files

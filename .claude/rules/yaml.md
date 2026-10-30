@@ -20,6 +20,26 @@ Two profiles, both pinned:
 | round-trip | 80 | entity frontmatter, collections — the human-edited surface |
 | safe | 4096 | `.khub/{ontology,policy,storage}.yaml` and friends, where long scalars stay on one line |
 
+## Where khub departs from ruamel
+
+Byte-for-byte holds except where ruamel's own output does not read back as
+the value it was given (issue #80). There the value wins, and each departure
+is marked `khub, not ruamel` in `ryaml.go`:
+
+- a double-quoted fold that is not at a space keeps its `\` escape (ruamel
+  drops it after an escape such as `\\`, and the value gains a space);
+- a plain scalar never breaks after two or more spaces (the reader would fold
+  them to one);
+- a plain simple key never breaks before a long word (the key stops parsing).
+
+None of these shapes is in the T3 corpus, so T3 stays 1089/1089. ruamel's
+single trailing space before a plain fold is kept: it reads back exactly.
+
+The reader departs from goccy the same way: `foldPlain` in `yamlload.go`
+folds a multi-line plain scalar per the spec, because goccy keeps the white
+space before each break once a continuation line starts with `-`.
+`FuzzStringRoundTrip` holds the property: any string emitted reads back equal.
+
 ## Why goccy is parser-only
 
 `goccy/go-yaml` is the parser and lexer. It is **never** the writer: its encoder

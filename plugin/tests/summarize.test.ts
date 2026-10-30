@@ -165,7 +165,7 @@ test('status, validate and check report their counts', () => {
     tone: 'bad',
   })
   expect(
-    sayOf('khub check --strict', { passed: false, strict: true, orphans: ['x/a', 'x/b'], thin: [{}], expired: [{}] })
+    sayOf('khub check --strict', { passed: false, strict: true, orphans: ['x/a', 'x/b'], thin: [{}], retention: [{}] })
       .line,
   ).toBe('failed · orphans 2')
 })

@@ -1,12 +1,13 @@
-# A policy `retention` rule: meetings more than 30 days old (by `updated`, else
-# `created`; the clock is pinned to 2026-01-15) that record no decision are
-# reported in `expired`. The old meeting that links a decision, the fresh one
-# (re-dated by `updated`) and the undated draft are not; the old draft is. Decisions declare no rule, so
-# an old decision is never reported. The bucket is informational: `check`
-# passes, `--strict` included, and the human text marks each line. A failing
-# gate still prints the bucket, last; an edge that does not resolve is no
-# outbound edge, so the meeting carrying it is expired as well as dangling. `schema show` carries the rule, and a
-# malformed rule refuses the schema.
+# A policy `retention` rule: meetings more than 30 days old (by `updated`,
+# else `created`; the clock is pinned to 2026-01-15) that record no decision
+# are reported in the `retention` bucket. The old meeting that links a
+# decision, the fresh one (re-dated by `updated`) and the undated draft are
+# not; the old draft is. Decisions declare no rule, so an old decision is never
+# reported. The bucket is informational: `check` passes, `--strict` included,
+# and the human text marks each line. A failing gate still prints the bucket,
+# last; an edge that does not resolve is no outbound edge, so the meeting
+# carrying it is reported as well as dangling. `schema show --format json`
+# carries the rule, and a malformed rule refuses the schema.
 mode: human
 steps:
 - argv: ["init", "build-hub", ".", "--no-wire"]

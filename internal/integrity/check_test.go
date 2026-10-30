@@ -591,10 +591,10 @@ func TestMisplacedExpectedUsesStorageRelpathForPathlessTypes(t *testing.T) {
 }
 
 // Policy `retention`: an entity whose effective date (`updated`, else
-// `created`) is more than `days` old is expired; under `no_outbound` only one
-// with no outbound edge. Undated entities, types with no rule and the exact
+// `created`) is more than `days` old is a retention hit; under `no_outbound`
+// only one with no outbound edge. Undated entities, types with no rule and the exact
 // boundary day are never reported, and the bucket never fails the gate.
-func TestRetentionReportsExpired(t *testing.T) {
+func TestRetentionReportsHits(t *testing.T) {
 	root := cleanWS(t)
 	writeRaw(t, root, ".khub/policy.yaml",
 		"policy:\n  meeting: { retention: { days: 30, no_outbound: true } }\n")
@@ -611,36 +611,36 @@ func TestRetentionReportsExpired(t *testing.T) {
 		kv{"created", "2020-01-01"})
 
 	report := mustCheck(t, root, false)
-	want := []Expired{{Type: "meeting", Slug: "lonely", Date: "2025-11-01", AgeDays: 75}}
-	if !reflect.DeepEqual(report.Expired, want) {
-		t.Fatalf("expired = %+v, want %+v", report.Expired, want)
+	want := []RetentionHit{{Type: "meeting", Slug: "lonely", Date: "2025-11-01", AgeDays: 75}}
+	if !reflect.DeepEqual(report.Retention, want) {
+		t.Fatalf("retention = %+v, want %+v", report.Retention, want)
 	}
 
 	// Without no_outbound, a linked meeting ages out too.
 	writeRaw(t, root, ".khub/policy.yaml", "policy:\n  meeting: { retention: { days: 30 } }\n")
 	var ids []string
-	for _, e := range mustCheck(t, root, false).Expired {
+	for _, e := range mustCheck(t, root, false).Retention {
 		ids = append(ids, e.ID())
 	}
 	if !reflect.DeepEqual(ids, []string{"meeting/linked", "meeting/lonely"}) {
-		t.Errorf("expired = %v, want [meeting/linked meeting/lonely]", ids)
+		t.Errorf("retention = %v, want [meeting/linked meeting/lonely]", ids)
 	}
 }
 
-// Expired is informational under both gates: the clock alone moves an entity
+// Retention is informational under both gates: the clock alone moves an entity
 // into it, so it must never turn `check` red.
-func TestExpiredNeverGates(t *testing.T) {
+func TestRetentionNeverGates(t *testing.T) {
 	for _, strict := range []bool{false, true} {
-		r := &CheckReport{Strict: strict, Expired: []Expired{{Type: "meeting", Slug: "old"}}}
+		r := &CheckReport{Strict: strict, Retention: []RetentionHit{{Type: "meeting", Slug: "old"}}}
 		if !r.Passed() {
-			t.Errorf("strict=%v: an expired entity failed the gate", strict)
+			t.Errorf("strict=%v: a retention hit failed the gate", strict)
 		}
 	}
 }
 
-func expiredIDs(r *CheckReport) []string {
+func retentionIDs(r *CheckReport) []string {
 	ids := []string{}
-	for _, e := range r.Expired {
+	for _, e := range r.Retention {
 		ids = append(ids, e.ID())
 	}
 	return ids
@@ -659,12 +659,12 @@ func TestRetentionFallsBackPastAnUnparseableUpdated(t *testing.T) {
 		"---\ntype: meeting\ntitle: None\nupdated: 2025-13-45\n---\n")
 
 	report := mustCheck(t, root, false)
-	want := []Expired{
+	want := []RetentionHit{
 		{Type: "meeting", Slug: "bad-stamp", Date: "2025-11-01", AgeDays: 75},
 		{Type: "meeting", Slug: "empty-stamp", Date: "2025-11-01", AgeDays: 75},
 	}
-	if !reflect.DeepEqual(report.Expired, want) {
-		t.Fatalf("expired = %+v, want %+v", report.Expired, want)
+	if !reflect.DeepEqual(report.Retention, want) {
+		t.Fatalf("retention = %+v, want %+v", report.Retention, want)
 	}
 }
 
@@ -686,10 +686,10 @@ func TestRetentionNoOutboundCountsStoredEdgesOnly(t *testing.T) {
 	seed(t, root, "meetings/to-draft.md", kv{"type", "meeting"}, kv{"title", "To draft"},
 		kv{"created", "2025-11-01"}, kv{"related", []any{"client/pending"}})
 
-	got := expiredIDs(mustCheck(t, root, false))
+	got := retentionIDs(mustCheck(t, root, false))
 	want := []string{"meeting/inbound-only", "meeting/self-loop"}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("expired = %v, want %v", got, want)
+		t.Fatalf("retention = %v, want %v", got, want)
 	}
 }
 
@@ -701,8 +701,8 @@ func TestRetentionSweepsCollectionRows(t *testing.T) {
 		"old-row:\n  repo: acme/old\n  status: archived\n  created: 2025-11-01\n"+
 			"new-row:\n  repo: acme/new\n  status: active\n  created: 2026-01-10\n")
 
-	got := expiredIDs(mustCheck(t, root, false))
+	got := retentionIDs(mustCheck(t, root, false))
 	if !reflect.DeepEqual(got, []string{"repo/old-row"}) {
-		t.Fatalf("expired = %v, want [repo/old-row]", got)
+		t.Fatalf("retention = %v, want [repo/old-row]", got)
 	}
 }

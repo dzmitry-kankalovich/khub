@@ -68,19 +68,19 @@ type Misplaced struct {
 	Expected string
 }
 
-// Expired is one entity past its type's retention rule: its effective date
+// RetentionHit is one entity past its type's retention rule: its effective date
 // (`updated`, else `created`) is more than the rule's days old and, under
 // `no_outbound`, it has no outbound edge. A candidate for removal, reported and
 // never acted on.
-type Expired struct {
+type RetentionHit struct {
 	Type    string
 	Slug    string
 	Date    string // the effective date, YYYY-MM-DD
 	AgeDays int
 }
 
-// ID is Expired.id.
-func (e Expired) ID() string { return e.Type + "/" + e.Slug }
+// ID is RetentionHit.id.
+func (e RetentionHit) ID() string { return e.Type + "/" + e.Slug }
 
 // AliasConflict is one alias that names more than one entity: two or more
 // entities declare it, or it is some other entity's slug. Either way an ID
@@ -158,7 +158,7 @@ type CheckReport struct {
 	// never consulted by Passed, `--strict` included: the clock alone moves an
 	// entity into this bucket, and a gate that turns red with no change to the
 	// workspace would fail every CI run on the day a meeting turns N days old.
-	Expired []Expired
+	Retention []RetentionHit
 }
 
 // Passed is CheckReport.passed.
@@ -332,11 +332,11 @@ func Check(root string, strict bool, now time.Time) (*CheckReport, error) {
 		StrayTemplates:          strayTemplates,
 		MissingTemplates:        missingTemplates,
 		AliasConflicts:          aliasConflicts(valid, entityNodes),
-		Expired:                 expiredEntities(resolved, valid, g, entityNodes, now),
+		Retention:               retentionHits(resolved, valid, g, entityNodes, now),
 	}, nil
 }
 
-// expiredEntities sweeps every type declaring a policy `retention` rule. Drafts
+// retentionHits sweeps every type declaring a policy `retention` rule. Drafts
 // count, as they do for the orphan sweep: an abandoned draft is the likeliest
 // end-of-life candidate of all. The date is `updated`, else `created`, the
 // first that parses (project.Age); an entity with neither is never reported.
@@ -346,9 +346,9 @@ func Check(root string, strict bool, now time.Time) (*CheckReport, error) {
 // reference to an entity's file. A derived inverse is not stored on this
 // entity and does not count; a self-loop is dropped from the graph; a dangling
 // value or a path reference to a non-entity file is no edge.
-func expiredEntities(resolved *schema.ResolvedSchema, valid *index.Index, g *graph.Graph,
-	nodes []index.Node, now time.Time) []Expired {
-	out := []Expired{}
+func retentionHits(resolved *schema.ResolvedSchema, valid *index.Index, g *graph.Graph,
+	nodes []index.Node, now time.Time) []RetentionHit {
+	out := []RetentionHit{}
 	for _, n := range nodes {
 		rtype, _ := resolved.Types.Get(n.Type)
 		rule := rtype.Retention
@@ -362,7 +362,7 @@ func expiredEntities(resolved *schema.ResolvedSchema, valid *index.Index, g *gra
 		if rule.NoOutbound && g.OutDegree(n) > 0 {
 			continue
 		}
-		out = append(out, Expired{Type: n.Type, Slug: n.Slug, Date: date.Format("2006-01-02"), AgeDays: age})
+		out = append(out, RetentionHit{Type: n.Type, Slug: n.Slug, Date: date.Format("2006-01-02"), AgeDays: age})
 	}
 	return out
 }

@@ -254,17 +254,17 @@ func checkPayload(report *integrity.CheckReport) *omap.Map {
 	payload.Set("thin", findingRecords(report.Thin, false))
 	// Entities past their type's policy `retention` rule: candidates for
 	// removal, which khub reports and never acts on.
-	expired := make([]any, 0, len(report.Expired))
-	for _, e := range report.Expired {
+	retention := make([]any, 0, len(report.Retention))
+	for _, e := range report.Retention {
 		record := omap.New()
 		record.Set("id", e.ID())
 		record.Set("type", e.Type)
 		record.Set("slug", e.Slug)
 		record.Set("date", e.Date)
 		record.Set("age_days", e.AgeDays)
-		expired = append(expired, record)
+		retention = append(retention, record)
 	}
-	payload.Set("expired", expired)
+	payload.Set("retention", retention)
 	return payload
 }
 
@@ -282,8 +282,8 @@ func checkHuman(report *integrity.CheckReport) {
 		for _, th := range report.Thin {
 			fmt.Printf("thin %s: %s (informational)\n", th.ID(), th.Reason)
 		}
-		for _, e := range report.Expired {
-			fmt.Printf("%s (informational)\n", expiredLine(e))
+		for _, e := range report.Retention {
+			fmt.Printf("%s (informational)\n", retentionLine(e))
 		}
 		fmt.Println("Graph check passed")
 		return
@@ -350,12 +350,12 @@ func checkHuman(report *integrity.CheckReport) {
 		fmt.Printf("thin %s: %s\n", th.ID(), th.Reason)
 	}
 	// Marked on the failing path too: the gate did not fail because of these.
-	for _, e := range report.Expired {
-		fmt.Printf("%s (informational)\n", expiredLine(e))
+	for _, e := range report.Retention {
+		fmt.Printf("%s (informational)\n", retentionLine(e))
 	}
 }
 
-// expiredLine is one retention finding as `check` prints it.
-func expiredLine(e integrity.Expired) string {
-	return fmt.Sprintf("expired %s: dated %s, %d days old, past its type's retention", e.ID(), e.Date, e.AgeDays)
+// retentionLine is one retention finding as `check` prints it.
+func retentionLine(e integrity.RetentionHit) string {
+	return fmt.Sprintf("retention %s: dated %s, %d days old, past its type's retention", e.ID(), e.Date, e.AgeDays)
 }

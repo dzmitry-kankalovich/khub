@@ -155,7 +155,7 @@ func Validate(root string, target *string, strict bool) (*ValidateReport, error)
 	}
 	// Dead relative links: a gap on every md body, templated or not — after
 	// the section-rule gaps, so a template's findings read first.
-	gaps := append(body.gaps, deadLinkGaps(root, resolved, valid, target)...)
+	gaps := append(body.gaps, deadLinkGaps(root, resolved, valid, target, body.bodies)...)
 	return &ValidateReport{
 		Count: count, Errors: errors, Gaps: gaps, Body: metrics, Lenses: lenses,
 	}, nil

@@ -1,6 +1,8 @@
 package integrity
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -43,5 +45,47 @@ func TestDeadLinksAreGaps(t *testing.T) {
 	// check does not read links: thin stays the body-rule bucket.
 	if c := mustCheck(t, root, false); len(c.Thin) != 0 {
 		t.Errorf("check thin = %v, want none", c.Thin)
+	}
+}
+
+// One gap per dead path: spellings that clean to the same path are one link.
+func TestDeadLinkDedupesCleanedPath(t *testing.T) {
+	root := bodyWS(t, "")
+	createBody(t, root, "note", "dup", "[a](gone.md) [b](./gone.md) [c](sub/../gone.md)\n")
+	got := bodyRows(mustValidate(t, root, nil, false).Gaps)
+	want := []string{"note/dup: body: dead link 'gone.md' (no such file)"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("gaps = %v, want %v", got, want)
+	}
+}
+
+// Bodies are untrusted: whether a gap appears must say nothing about files
+// outside the workspace. A link that resolves above the root, or through a
+// symlink that leaves it, is skipped whether or not its target exists; a
+// symlink that stays inside the root is followed.
+func TestDeadLinksNeverProbeOutsideTheWorkspace(t *testing.T) {
+	root := bodyWS(t, "")
+	outside := t.TempDir()
+	writeRaw(t, outside, "exists.txt", "x")
+	if err := os.Symlink(outside, filepath.Join(root, "out")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := os.Symlink("notes", filepath.Join(root, "in")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	up, err := filepath.Rel(filepath.Join(root, "notes"), outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	up = filepath.ToSlash(up)
+	createBody(t, root, "note", "target", "Target.\n")
+	createBody(t, root, "note", "probe",
+		"[e]("+up+"/exists.txt) [n]("+up+"/nope.txt) "+
+			"[se](../out/exists.txt) [sn](../out/nope.txt) [readme](../../README.md) "+
+			"[il](../in/target.md) [id](../in/gone.md)\n")
+	got := bodyRows(mustValidate(t, root, nil, false).Gaps)
+	want := []string{"note/probe: body: dead link '../in/gone.md' (no such file)"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("gaps = %v, want %v", got, want)
 	}
 }

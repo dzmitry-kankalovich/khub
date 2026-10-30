@@ -10,11 +10,14 @@ Notable changes to khub. Format follows [Keep a Changelog](https://keepachangelo
   `field`, `expected` and `suggestion` where a refusal has them, so an agent
   can correct a call without parsing the message: `enum_violation` names the
   attribute, its members and the nearest one; `lookup_error` and
-  `referential_integrity` suggest the nearest existing id; `unknown_type`,
-  `filter_error`, `illegal_predicate`, `unknown_preset` and `bad_target` list
-  what is declared and suggest the nearest; `ambiguity_error` lists the
-  qualified ids to choose from. Each key is absent when it does not apply, and
-  messages, prose output and exit codes are unchanged.
+  `referential_integrity` suggest the nearest existing id (never the entity
+  being written); `unknown_type`, `filter_error`, `illegal_predicate`,
+  `unknown_predicate`, `strict_unknown_field`, `unknown_preset` and
+  `bad_target` list what is declared and suggest the nearest;
+  `ambiguity_error` lists the qualified ids to choose from. A tie is never
+  guessed: equally near ids are listed in `expected` instead. Each key is
+  absent when it does not apply, and messages, prose output and exit codes
+  are unchanged.
 - **`docs/cli-output-contract.md`.** One page for what a program reading khub
   may rely on: when stdout is JSON, one value per call, the JSON dialect,
   stderr, exit codes and the refusal envelope.

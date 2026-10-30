@@ -16,9 +16,11 @@ import (
 // (docs/cli-output-contract.md): the CLI's JSON envelope carries each one only
 // when it is set, so an agent can correct a call without parsing the message.
 // Field is the schema attribute or relation at fault; Expected the closed set
-// of values the call could have used, in schema or declaration order;
-// Suggestion the single nearest of those (or of the workspace's ids), chosen
-// by Nearest — empty when nothing is close enough to be worth saying.
+// of values the call could have used, in the order the factory documents
+// (declaration order for enum members and a type's relations, sorted for the
+// type, field, preset and id lists); Suggestion the single nearest of those
+// (or of the workspace's ids), chosen by Nearest — empty when nothing is close
+// enough, or when two candidates are equally close.
 type Located struct {
 	Code       string
 	Message    string
@@ -179,7 +181,7 @@ func BadTarget(value string) *Located {
 
 // ReferentialIntegrity is `referential_integrity`: a relation names a target
 // entity that does not exist. noun defaults to "relation". The caller, which
-// holds the index, sets the suggestion with WithSuggestion.
+// holds the index, sets the suggestion with Near.
 func ReferentialIntegrity(targetType, target, predicate, noun string) *Located {
 	if noun == "" {
 		noun = "relation"
@@ -271,13 +273,16 @@ func AliasTaken(slug, owner string, minted bool) *Located {
 }
 
 // StrictUnknownField is `strict_unknown_field`: a field the type does not
-// declare, refused because --strict was passed.
-func StrictUnknownField(field string) *Located {
+// declare, refused because --strict was passed. declared is the type's
+// fields, attributes then relations, each in declaration order.
+func StrictUnknownField(field string, declared []string) *Located {
 	return &Located{
-		Code:    "strict_unknown_field",
-		Message: fmt.Sprintf("Unknown field '%s' rejected under --strict", field),
-		Target:  field,
-		Field:   field,
+		Code:       "strict_unknown_field",
+		Message:    fmt.Sprintf("Unknown field '%s' rejected under --strict", field),
+		Target:     field,
+		Field:      field,
+		Expected:   declared,
+		Suggestion: Nearest(field, declared),
 	}
 }
 
@@ -319,17 +324,21 @@ func NumberViolation(value, field string) *Located {
 }
 
 // LookupError is `lookup_error`: no entity resolves to the id. The caller,
-// which holds the index, sets the nearest id with WithSuggestion — that is
+// which holds the index, sets the nearest id with Near — that is
 // what lets an agent retry a misspelt id instead of abandoning the lookup.
 func LookupError(id string) *Located {
 	return &Located{Code: "lookup_error", Message: fmt.Sprintf("No entity '%s' found", id), Target: id}
 }
 
-// WithSuggestion sets the error's suggestion and returns it, for a factory
-// whose candidates only the caller can see (the workspace's ids). The message
-// is untouched: it is pinned prose, and the suggestion is the machine field.
-func (e *Located) WithSuggestion(s string) *Located {
-	e.Suggestion = s
+// Near sets the error's suggestion, or, when several candidates are equally
+// near, lists them as expected instead, and returns the error. It serves a
+// factory whose candidates only the caller can see (the workspace's ids). The
+// message is untouched: it is pinned prose, and these are the machine fields.
+func (e *Located) Near(suggestion string, tied []string) *Located {
+	e.Suggestion = suggestion
+	if len(tied) > 0 {
+		e.Expected = tied
+	}
 	return e
 }
 
@@ -517,39 +526,51 @@ func PathIgnored(type_, path string) *Located {
 // Nearest is the candidate closest to want, or "" when nothing is close enough
 // to be worth saying. A wrong guess is worse than silence, so the budget is
 // tight: one edit per three characters typed, never more than two — 'nope' is
-// two edits from 'type' and must not be pointed at it, while 'statsu' still
-// reaches 'status'. Under three characters only a difference of case is
+// two edits from 'type' and must not be pointed at it. Swapping two adjacent
+// characters counts as one edit (typoDistance), so 'knid' reaches 'kind'. Under three characters only a difference of case is
 // suggested. The comparison folds case, so a wrong case alone always
-// qualifies, and an exact match is never suggested back. Ties go to the
-// earlier candidate, so the answer follows the caller's (declaration) order.
+// qualifies, and an exact match is never suggested back. Two different
+// candidates equally near is a tie, and a tie is silence too: picking one by
+// list order would be a guess.
 //
 // This is the DTO's budget. The usage errors' "Did you mean" (internal/cli
 // suggest) keeps its own, looser one over the same EditDistance: command and
-// option names are a small fixed set, entity values are not.
+// option names are a small fixed set, entity values are not. The usage hint
+// also keeps plain Levenshtein and an exact-case comparison.
 func Nearest(want string, candidates []string) string {
-	if i := NearestIndex(want, candidates); i >= 0 {
-		return candidates[i]
+	best := NearestAll(want, candidates)
+	if len(best) == 0 {
+		return ""
 	}
-	return ""
+	for _, i := range best[1:] {
+		if candidates[i] != candidates[best[0]] {
+			return ""
+		}
+	}
+	return candidates[best[0]]
 }
 
-// NearestIndex is Nearest's position in candidates, or -1. It serves a caller
-// that matches on one spelling and suggests another (a bare slug matched, the
-// qualified id suggested).
-func NearestIndex(want string, candidates []string) int {
+// NearestAll is every position in candidates at the least distance from want
+// within Nearest's budget, in candidate order, or nil. It serves a caller that
+// matches on one spelling and suggests another (a bare slug matched, the
+// qualified id suggested), and that judges ties itself: two entities sharing a
+// slug have the same spelling but are different answers.
+func NearestAll(want string, candidates []string) []int {
 	limit := min(2, len([]rune(want))/3)
 	folded := strings.ToLower(want)
-	best, bestDist := -1, 0
+	var best []int
+	bestDist := 0
 	for i, c := range candidates {
 		if c == want {
 			continue
 		}
-		d := EditDistance(folded, strings.ToLower(c))
-		if d > limit {
-			continue
-		}
-		if best < 0 || d < bestDist {
-			best, bestDist = i, d
+		d := typoDistance(folded, strings.ToLower(c))
+		switch {
+		case d > limit:
+		case best == nil || d < bestDist:
+			best, bestDist = []int{i}, d
+		case d == bestDist:
+			best = append(best, i)
 		}
 	}
 	return best
@@ -575,4 +596,31 @@ func EditDistance(a, b string) int {
 		prev, cur = cur, prev
 	}
 	return prev[len(br)]
+}
+
+// typoDistance is the optimal-string-alignment distance over runes: Levenshtein
+// plus one edit for swapping two adjacent characters, the commonest typo.
+func typoDistance(a, b string) int {
+	ar, br := []rune(a), []rune(b)
+	d := make([][]int, len(ar)+1)
+	for i := range d {
+		d[i] = make([]int, len(br)+1)
+		d[i][0] = i
+	}
+	for j := range d[0] {
+		d[0][j] = j
+	}
+	for i := 1; i <= len(ar); i++ {
+		for j := 1; j <= len(br); j++ {
+			cost := 1
+			if ar[i-1] == br[j-1] {
+				cost = 0
+			}
+			d[i][j] = min(min(d[i-1][j]+1, d[i][j-1]+1), d[i-1][j-1]+cost)
+			if i > 1 && j > 1 && ar[i-1] == br[j-2] && ar[i-2] == br[j-1] {
+				d[i][j] = min(d[i][j], d[i-2][j-2]+1)
+			}
+		}
+	}
+	return d[len(ar)][len(br)]
 }

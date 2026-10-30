@@ -29,8 +29,10 @@ func TestNearest(t *testing.T) {
 		{"AB", []string{"ab"}, "ab"},
 		{"kind", []string{"kind", "kinds"}, "kinds"}, // an exact match is never suggested back
 		{"agent", []string{"claude", "agents", "both"}, "agents"},
-		{"cat", []string{"bat", "cab"}, "bat"}, // ties go to the earlier candidate
+		{"cat", []string{"bat", "cab"}, ""},    // two candidates equally near is a tie: silence
+		{"cat", []string{"bat", "bat"}, "bat"}, // the same spelling twice is no tie
 		{"x", nil, ""},
+		{"knid", []string{"kind", "title"}, "kind"}, // a swap of neighbours is one edit
 	}
 	for _, c := range cases {
 		if got := Nearest(c.want, c.candidates); got != c.out {
@@ -49,7 +51,25 @@ func TestEnumViolationDTO(t *testing.T) {
 	if e.Error() != "'acepted' is not a valid status (proposed, accepted)" {
 		t.Fatalf("EnumViolation message moved: %q", e.Error())
 	}
-	if l := LookupError("x").WithSuggestion("y"); l.Suggestion != "y" || l.Error() != "No entity 'x' found" {
-		t.Fatalf("WithSuggestion = %q %q", l.Suggestion, l.Error())
+	if l := LookupError("x").Near("y", nil); l.Suggestion != "y" || l.Expected != nil || l.Error() != "No entity 'x' found" {
+		t.Fatalf("Near = %q %v %q", l.Suggestion, l.Expected, l.Error())
+	}
+	if l := LookupError("x").Near("", []string{"a/x1", "b/x1"}); l.Suggestion != "" || len(l.Expected) != 2 {
+		t.Fatalf("Near tie = %q %v", l.Suggestion, l.Expected)
+	}
+	if e := StrictUnknownField("knid", []string{"title", "kind"}); e.Field != "knid" || e.Suggestion != "kind" {
+		t.Fatalf("StrictUnknownField DTO = %q %q", e.Field, e.Suggestion)
+	}
+}
+
+// NearestAll keeps every candidate at the best distance, in candidate order,
+// so a caller matching spellings of different things can see the tie.
+func TestNearestAll(t *testing.T) {
+	got := NearestAll("cmp-serch", []string{"cmp-search", "cmp-search", "cmp-serch2", "cmp-api"})
+	if len(got) != 3 || got[0] != 0 || got[1] != 1 || got[2] != 2 {
+		t.Fatalf("NearestAll = %v, want [0 1 2]", got)
+	}
+	if got := NearestAll("zzzz", []string{"cmp-search"}); got != nil {
+		t.Fatalf("NearestAll far miss = %v, want nil", got)
 	}
 }

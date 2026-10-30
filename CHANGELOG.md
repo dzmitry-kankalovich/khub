@@ -2,6 +2,16 @@
 
 Notable changes to khub. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); khub is pre-release.
 
+## [Unreleased]
+
+### Added
+
+- **`query --under <id> --via <predicate>`.** Scopes a query to everything
+  that reaches an entity over a relation, any number of hops: `--under
+  sys-shop --via system` lists the shop's components, and over `depends_on`
+  every transitive dependent. The edge runs from the contained entity to its
+  container; the anchor is excluded, and the other filters AND with it.
+
 ## [0.30.0] — 2026-10-28
 
 Storage can now follow a hub's existing nesting, relations can point to files

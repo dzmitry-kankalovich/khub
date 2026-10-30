@@ -2,7 +2,7 @@
 // `khub query`.
 //
 // ANDs a set of filters (type, frontmatter field, tag, --has/--missing predicate
-// presence, orphan/stale flags, draft scope) over the entity index and the
+// presence, orphan/stale flags, draft scope, --under containment) over the entity index and the
 // resolved edge graph. Filters read frontmatter and derived edges only, never
 // body prose (QRY-001). An empty result is a success, not an error (QRY-002).
 // Every match carries its orphan and stale flags (QRY-009), computed identically
@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/endgame-build/khub/internal/entity"
 	"github.com/endgame-build/khub/internal/errs"
 	"github.com/endgame-build/khub/internal/graph"
 	"github.com/endgame-build/khub/internal/index"
@@ -54,6 +55,10 @@ type Filters struct {
 	DraftOnly  bool
 	ActiveOnly bool
 	Limit      *int
+	// Under keeps the entities that reach this anchor over Via's stored edges,
+	// any number of hops; the anchor itself is excluded. Both or neither.
+	Under *string
+	Via   *string
 }
 
 // Query returns the entities passing every filter, each annotated orphan/stale.
@@ -78,6 +83,18 @@ func Query(root string, filters Filters, now time.Time) ([]Match, error) {
 		return nil, err
 	}
 
+	var under map[index.Node]int
+	if filters.Under != nil && filters.Via != nil {
+		if err := graph.RequirePredicate(resolved, *filters.Via); err != nil {
+			return nil, err
+		}
+		anchor, err := entity.ResolveID(idx, *filters.Under)
+		if err != nil {
+			return nil, err
+		}
+		under = graph.Under(g, anchor, *filters.Via)
+	}
+
 	nodes := append([]index.Node(nil), idx.Order...)
 	index.SortNodes(nodes)
 
@@ -85,6 +102,11 @@ func Query(root string, filters Filters, now time.Time) ([]Match, error) {
 	for _, node := range nodes {
 		if filters.Type != nil && *filters.Type != "" && node.Type != *filters.Type {
 			continue
+		}
+		if under != nil {
+			if _, ok := under[node]; !ok {
+				continue
+			}
 		}
 		meta := idx.Meta[node]
 		// A type declaring `orphan: true` is never flagged: edge-less is its

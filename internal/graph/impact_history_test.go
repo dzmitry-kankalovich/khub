@@ -421,3 +421,27 @@ func TestCyclesOverPredicate(t *testing.T) {
 		t.Fatal("no `related` cycles exist")
 	}
 }
+
+// query --under: the nodes that reach the anchor over the predicate, with hop
+// counts, never the anchor itself — even when a cycle leads back to it.
+func TestUnderReachesAnchorTransitively(t *testing.T) {
+	idx := buildIdx(t, impactWS(t))
+	g := BuildGraph(idx)
+	got := Under(g, index.Node{Type: "client", Slug: "node-c"}, "depends_on")
+	want := map[string]int{"node-b": 1, "node-a": 2}
+	if len(got) != len(want) {
+		t.Fatalf("want %v, got %v", want, got)
+	}
+	for n, d := range got {
+		if want[n.Slug] != d {
+			t.Fatalf("want %v, got %v", want, got)
+		}
+	}
+	cyc := Under(g, index.Node{Type: "client", Slug: "node-x"}, "depends_on")
+	if _, self := cyc[index.Node{Type: "client", Slug: "node-x"}]; self || len(cyc) != 2 {
+		t.Fatalf("a cycle must not put the anchor under itself; got %v", cyc)
+	}
+	if leaf := Under(g, index.Node{Type: "client", Slug: "node-a"}, "depends_on"); len(leaf) != 0 {
+		t.Fatalf("nothing reaches node-a; got %v", leaf)
+	}
+}

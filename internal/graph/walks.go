@@ -161,6 +161,17 @@ func Impact(idx *index.Index, id string, predicate string, reverse bool) ([]Impa
 	return out, nil
 }
 
+// Under returns every node that reaches src over predicate's stored edges,
+// with its hop count: the transitive containment set behind `query --under`.
+// An edge points from the contained entity to its container (a component's
+// `system`), so this is Impact's reverse walk. src is never under itself, even
+// on a cyclic hierarchy.
+func Under(g *Graph, src index.Node, predicate string) map[index.Node]int {
+	depths := shortestPathLengths(predicateAdjacency(g, predicate, true), src)
+	delete(depths, src)
+	return depths
+}
+
 // predicateAdjacency is _predicate_digraph collapsed to a successor map, with
 // the reverse view folded in (sub.reverse(copy=False)).
 func predicateAdjacency(g *Graph, predicate string, reverse bool) map[index.Node][]index.Node {
@@ -275,7 +286,7 @@ func WalkNeighbors(root, id string, predicate *string, direction string, depth i
 		return nil, err
 	}
 	if predicate != nil {
-		if err := requirePredicate(resolved, *predicate); err != nil {
+		if err := RequirePredicate(resolved, *predicate); err != nil {
 			return nil, err
 		}
 	}
@@ -290,7 +301,7 @@ func WalkImpact(root, id string, predicate string, reverse bool) ([]ImpactNode, 
 	if err != nil {
 		return nil, err
 	}
-	if err := requirePredicate(resolved, predicate); err != nil {
+	if err := RequirePredicate(resolved, predicate); err != nil {
 		return nil, err
 	}
 	return Impact(idx, id, predicate, reverse)
@@ -304,7 +315,7 @@ func WalkHistory(root, id string, predicate string, limit *int) ([]HistoryLink, 
 	if err != nil {
 		return nil, err
 	}
-	if err := requirePredicate(resolved, predicate); err != nil {
+	if err := RequirePredicate(resolved, predicate); err != nil {
 		return nil, err
 	}
 	return History(idx, id, predicate, limit)
@@ -324,12 +335,12 @@ func walkIndex(root string) (*schema.ResolvedSchema, *index.Index, error) {
 	return resolved, index.Filter(scanned, index.StrayNodes(scanned)), nil
 }
 
-// requirePredicate is _require_predicate: raise unless some type in the schema
+// RequirePredicate is _require_predicate: raise unless some type in the schema
 // declares predicate (universal edges included).
 //
 // core/errors.py builds this LocatedError inline with no factory, so the code and
 // message are assembled here rather than in internal/errs.
-func requirePredicate(resolved *schema.ResolvedSchema, predicate string) error {
+func RequirePredicate(resolved *schema.ResolvedSchema, predicate string) error {
 	declared := map[string]bool{}
 	for _, tname := range resolved.Types.Keys() {
 		rtype, _ := resolved.Types.Get(tname)

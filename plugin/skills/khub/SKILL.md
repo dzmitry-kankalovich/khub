@@ -59,6 +59,9 @@ hand-edit is how a workspace acquires a field no default gate will report.
 - `khub edit <id> <field> <v> --format json` — change a field; `edit <id> draft false` publishes.
 - `khub link <id> <predicate> <target>` / `khub unlink <id> <predicate> <target> --format json` — relations, idempotent. Read `changed` to tell a write from a no-op; both exit 0.
 - `khub remove <id> --format json` — delete; refuses while an inbound edge resolves to it unless `--force`.
+- Add `--dry-run` to any of the five to preview: the same refusals on the same exit codes, the
+  record the write would print plus `changed` and `"dry_run": true`, and nothing written. Use
+  it before a `remove --force` or when unsure what an `edit` or a minted id would come to.
 
 ## The loop
 

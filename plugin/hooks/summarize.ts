@@ -1,7 +1,7 @@
 import type { KhubCall, KhubRow, KhubTone } from '../types'
 import { clean, count, firstLine, INFORMATIONAL, isRow, refusal, rowsOf, text } from './cli'
 import type { Row } from './cli'
-import { edited } from './parse'
+import { edited, isDryRun, isWrite } from './parse'
 import type { Simple } from './parse'
 
 export type Summary = { head: string; line: string; tone: KhubTone }
@@ -120,6 +120,9 @@ function resultOf(call: Simple, json: unknown, note: string): Result {
       return { line: `+ ${text(row.id)}${row.draft === true ? ' · draft' : ''}`, tone: 'ok' }
 
     case 'edit': {
+      // Only a dry run's record carries `changed` for an edit.
+      if (row.changed === false) return { line: 'no change', tone: 'plain' }
+
       const fields = edited(call)
 
       return { line: `~ ${text(row.id ?? call.positional[0])}${fields === '' ? '' : ` · ${fields}`}`, tone: 'ok' }
@@ -196,6 +199,9 @@ export function summarize(call: Simple, json: unknown, note: string): Summary {
   if (json === undefined) return { head, line: clean(firstLine(note)), tone: 'plain' }
 
   const result = resultOf(call, json, note)
+
+  // A write's dry run reads as what the write would do, in the plain tone of a read.
+  if (isWrite(call) && isDryRun(call)) return { head, line: clean(`dry run · ${result.line}`), tone: 'plain' }
 
   return { head, line: clean(result.line), tone: result.tone }
 }

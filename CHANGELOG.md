@@ -2,6 +2,21 @@
 
 Notable changes to khub. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); khub is pre-release.
 
+## [Unreleased]
+
+### Added
+
+- **`--dry-run` on `add`, `edit`, `link`, `unlink` and `remove`.** A dry run
+  runs every check the write runs — schema, referential integrity, slug and
+  alias gates, the inbound-edge guard, the collection re-render and the
+  storage path refusals — and refuses where the write would, on the same exit
+  code. It takes no lock and writes nothing. On success it prints the record
+  the write would print, plus `changed` (whether the write would move a byte
+  on disk; `link` and `unlink` already carry it) and `"dry_run": true`, one
+  shape across the five verbs. Text output reads `Would create …`,
+  `Would update …`, `Would link …`, `Would unlink …`, `Would remove …`, or the
+  write's own no-op line.
+
 ## [0.30.0] — 2026-10-28
 
 Storage can now follow a hub's existing nesting, relations can point to files

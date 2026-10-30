@@ -97,6 +97,23 @@ test('remove names what went', () => {
   })
 })
 
+test('a write run with --dry-run reads as a preview, never as a write', () => {
+  expect(say('khub add adr --title "Use RE2 patterns" --status accepted --dry-run --format json', F.add_dry)).toEqual({
+    head: 'khub add adr',
+    line: `dry run · + adr/${ADR}`,
+    tone: 'plain',
+  })
+  expect(say('khub edit cmp-search lifecycle production --dry-run --format json', F.edit_dry)).toEqual({
+    head: 'khub edit cmp-search',
+    line: 'dry run · no change',
+    tone: 'plain',
+  })
+  expect(say('khub unlink cmp-search depends_on cmp-storage --dry-run --format json', F.unlink_dry).line).toBe(
+    'dry run · ⇢ cmp-search depends_on cmp-storage',
+  )
+  expect(say('khub remove cmp-search --dry-run --format json', F.remove_refused).tone).toBe('bad')
+})
+
 test('get shows the id, the title and the edge count', () => {
   expect(say('khub get cmp-search --edges --format json', F.get_search).line).toBe('component/cmp-search · Search · 3 edges')
   expect(sayOf('khub get cmp-search', { id: 'component/cmp-search', frontmatter: { name: 'Search' } }).line).toBe(

@@ -36,7 +36,7 @@ func registerSearch(root *cobra.Command) {
 				if err != nil {
 					return err
 				}
-				fused := len(also) > 0 // one distinct group is a plain search, with its bytes
+				fused := res.Groups > 1 // one distinct group is a plain search, with its bytes
 				if note := searchNote(res, plain); note != "" {
 					Note(note)
 				}

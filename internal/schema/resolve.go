@@ -17,6 +17,7 @@ import (
 	"github.com/endgame-build/khub/internal/fsio"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/endgame-build/khub/internal/canon"
@@ -74,9 +75,7 @@ func mergeLayers(docs []schemaDoc) (*authoredLayers, error) {
 	pre := &vocabCollector{}
 	for _, d := range docs {
 		for _, k := range d.m.Keys() {
-			switch k {
-			case "ontology", "policy", "storage", "version":
-			default:
+			if !slices.Contains(layerDocKeys, k) {
 				pre.add("extra_forbidden", []string{k}, msgExtra)
 			}
 		}
@@ -96,7 +95,7 @@ func mergeLayers(docs []schemaDoc) (*authoredLayers, error) {
 						"(see `khub schema base`)")
 			}
 			for _, k := range om.Keys() {
-				if k != "entities" {
+				if !slices.Contains(authoredOntologyKeys, k) {
 					pre.add("extra_forbidden", []string{"ontology", k}, msgExtra)
 				}
 			}

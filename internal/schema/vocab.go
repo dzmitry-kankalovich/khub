@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -55,6 +56,34 @@ var idPrefixRE = regexp.MustCompile(IDPrefixPattern)
 const TemplateNamePattern = `^[a-z][a-z0-9-]*$`
 
 var templateNameRE = regexp.MustCompile(TemplateNamePattern)
+
+// The authored vocabulary: every key each mapping of a layer file accepts, in
+// declaration order. The walk below rejects any other key (extra="forbid"),
+// and LayerJSONSchema builds the editor schema from these same lists, so a key
+// added here reaches both or the schema build panics.
+var (
+	// layerDocKeys are the top-level keys of a layer document. `version` is
+	// the one non-layer key (presets stamp it).
+	layerDocKeys = []string{"ontology", "policy", "storage", "version"}
+	// authoredOntologyKeys is what an authored `ontology:` block may carry.
+	// The walk takes ontologyKeys, `base` included, but a base comes only from
+	// the embedded core document: mergeLayers rejects an authored one.
+	authoredOntologyKeys = []string{"entities"}
+	ontologyKeys         = []string{"base", "entities"}
+	baseKeys             = []string{"attributes", "relations"}
+	ontologyTypeKeys     = []string{"when", "attributes", "relations"}
+	policyTypeKeys       = []string{"required", "orphan", "path_refs"}
+	storageTypeKeys      = []string{"layout", "path", "format", "id_prefix", "id_date", "id_ordinal", "template"}
+	attributeKeys        = []string{"type", "required", "default", "enum", "pattern"}
+	relationKeys         = []string{"to", "many", "required", "inverse", "acyclic"}
+	idPrefixDeclKeys     = []string{"by", "map"}
+)
+
+// The strings boolLax reads as true and false, compared case-insensitively.
+var (
+	boolTrueWords  = []string{"1", "true", "t", "yes", "y", "on"}
+	boolFalseWords = []string{"0", "false", "f", "no", "n", "off"}
+)
 
 // AttrDecl is a scalar or enum attribute declaration. Type may be omitted on
 // an override (it is inherited from the base) or when Enum is given.
@@ -404,7 +433,7 @@ func validateSchemaFile(raw *omap.Map) (*SchemaFile, []vocabErr) {
 					c.add("dict_type", []string{"ontology", "entities"}, msgDict)
 				}
 			}
-			addExtras(m, []string{"ontology"}, c, "base", "entities")
+			addExtras(m, []string{"ontology"}, c, ontologyKeys...)
 		} else {
 			c.add("dict_type", []string{"ontology"}, msgDict)
 		}
@@ -465,7 +494,7 @@ func buildBaseBlock(v any, loc []string, c *vocabCollector) *BaseBlock {
 	bb := &BaseBlock{}
 	bb.Attributes = buildAttrMap(m, "attributes", loc, c)
 	bb.Relations = buildRelationMap(m, "relations", loc, c)
-	addExtras(m, loc, c, "attributes", "relations")
+	addExtras(m, loc, c, baseKeys...)
 	return bb
 }
 
@@ -489,7 +518,7 @@ func buildOntologyDecl(v any, loc []string, c *vocabCollector) *TypeDecl {
 	td.When = takeStrOrNil(m, "when", loc, c)
 	td.Attributes = buildAttrMap(m, "attributes", loc, c)
 	td.Relations = buildRelationMap(m, "relations", loc, c)
-	addExtras(m, loc, c, "when", "attributes", "relations")
+	addExtras(m, loc, c, ontologyTypeKeys...)
 	return td
 }
 
@@ -499,7 +528,7 @@ func applyPolicyDecl(m *omap.Map, td *TypeDecl, loc []string, c *vocabCollector)
 	td.Required = takeBool(m, "required", loc, c)
 	td.Orphan = takeBool(m, "orphan", loc, c)
 	td.PathRefs = takeBool(m, "path_refs", loc, c)
-	addExtras(m, loc, c, "required", "orphan", "path_refs")
+	addExtras(m, loc, c, policyTypeKeys...)
 }
 
 // applyStorageDecl folds a type's STORAGE delta — where and how its bytes
@@ -549,7 +578,7 @@ func applyStorageDecl(m *omap.Map, td *TypeDecl, loc []string, c *vocabCollector
 			c.add("string_type", at(loc, "template"), msgString)
 		}
 	}
-	addExtras(m, loc, c, "layout", "path", "format", "id_prefix", "id_date", "id_ordinal", "template")
+	addExtras(m, loc, c, storageTypeKeys...)
 }
 
 // storageDefaults fills the storage config of a type no storage layer named:
@@ -598,7 +627,7 @@ func buildAttrDecl(v any, loc []string, c *vocabCollector) *AttrDecl {
 		ad.Enum = takeStrList(ev, at(loc, "enum"), c)
 	}
 	ad.Pattern = takeStrOrNil(m, "pattern", loc, c)
-	addExtras(m, loc, c, "type", "required", "default", "enum", "pattern")
+	addExtras(m, loc, c, attributeKeys...)
 	return ad
 }
 
@@ -618,7 +647,7 @@ func buildRelationDecl(v any, loc []string, c *vocabCollector) *RelationDecl {
 	rd.Required = takeBool(m, "required", loc, c)
 	rd.Inverse = takeStrOrNil(m, "inverse", loc, c)
 	rd.Acyclic = takeBool(m, "acyclic", loc, c)
-	addExtras(m, loc, c, "to", "many", "required", "inverse", "acyclic")
+	addExtras(m, loc, c, relationKeys...)
 	return rd
 }
 
@@ -714,7 +743,7 @@ func buildIDPrefixDecl(m *omap.Map, loc []string, c *vocabCollector) *IDPrefixDe
 	} else {
 		c.add("missing", at(loc, "map"), msgMissing)
 	}
-	addExtras(m, loc, c, "by", "map")
+	addExtras(m, loc, c, idPrefixDeclKeys...)
 	return d
 }
 
@@ -871,10 +900,11 @@ func boolLax(v any, loc []string, c *vocabCollector) (bool, bool) {
 		}
 		c.add("bool_parsing", loc, msgBoolParse)
 	case string:
-		switch strings.ToLower(x) {
-		case "1", "true", "t", "yes", "y", "on":
+		lower := strings.ToLower(x)
+		if slices.Contains(boolTrueWords, lower) {
 			return true, true
-		case "0", "false", "f", "no", "n", "off":
+		}
+		if slices.Contains(boolFalseWords, lower) {
 			return false, true
 		}
 		c.add("bool_parsing", loc, msgBoolParse)

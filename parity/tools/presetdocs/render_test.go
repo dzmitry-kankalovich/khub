@@ -22,7 +22,11 @@ const fakeSchema = `{"provenance": {"preset": "demo", "version": "1.2.3"}, "type
   "relations": [
    {"predicate": "depends_on", "to": ["person"], "kind": "typed", "many": true, "required": false, "inverse": null, "acyclic": true, "derived": false},
    {"predicate": "owner", "to": ["person"], "kind": "typed", "many": false, "required": true, "inverse": null, "acyclic": false, "derived": false},
-   {"predicate": "owns", "to": ["note", "person"], "kind": "union", "many": true, "required": false, "inverse": "owner", "acyclic": false, "derived": true}]}]}`
+   {"predicate": "owns", "to": ["note", "person"], "kind": "union", "many": true, "required": false, "inverse": "owner", "acyclic": false, "derived": true}]},
+ {"name": "deal", "layout": "folder", "format": "md", "path": "deals", "id_ordinal": true, "path_refs": true,
+  "id_prefix": {"by": "stage", "map": {"won": "w", "lost": "l"}}, "id_date": false,
+  "id_shape": null, "required": false, "orphan": false, "when": "is it worth it?",
+  "fields": [], "relations": []}]}`
 
 const fakeBase = `{"fields": [
   {"name": "type", "type": "text", "required": true, "enum": null, "pattern": null, "default": null},
@@ -56,13 +60,13 @@ func doc(regions ...string) string {
 
 func TestSpliceRewritesRegionsAndKeepsProse(t *testing.T) {
 	s, b := fixtures(t)
-	got, problems := splice(doc("summary", "relations", "type note", "type person"), s, b)
+	got, problems := splice(doc("summary", "relations", "type note", "type person", "type deal"), s, b)
 	if len(problems) > 0 {
 		t.Fatalf("problems: %v", problems)
 	}
 	for _, want := range []string{
 		"Hand prose stays.", "Closing prose.",
-		"Preset version **1.2.3**. 2 entity types, and 2 relation predicates: 1 declared by the preset and 1 from the base block. Computed inverses, never stored: `owns`.",
+		"Preset version **1.2.3**. 3 entity types, and 2 relation predicates: 1 declared by the preset and 1 from the base block. Computed inverses, never stored: `owns`.",
 		"- **Base attributes**: `type`, `title`.",
 		"| `owner` | note, person | person | no | yes | no |  |",
 		"| `depends_on` | person | person | yes | no | yes |  |",
@@ -71,7 +75,10 @@ func TestSpliceRewritesRegionsAndKeepsProse(t *testing.T) {
 		"| `code` | text | no | pattern `^(a\\|b)$` |  |",
 		"| `live` | bool | no |  | `true` |",
 		"Record one when a thought is worth keeping.",
-		"Layout `singleton`, format `md`, path `me.md`. Required: `check` fails until one exists. Exempt from the orphan sweep.",
+		"Layout `file`, format `md`, stored at `notes/{slug}.md`, ids `slug`.",
+		"Layout `folder`, format `md`, stored at `deals/{slug}/_index.md`. The id prefix follows `stage`: `won` → `w`, `lost` → `l`. Accepts a legacy `NNN-` slug ordinal. A relation value that names no entity may name a workspace path.",
+		"Record one when is it worth it?\n",
+		"Layout `singleton`, format `md`, stored at `me.md`. Required: `check` fails until one exists. Exempt from the orphan sweep.",
 		"Attributes: only the base block.",
 		"Computed: `owns` → note | person (many, inverse of `owner`).",
 	} {
@@ -107,7 +114,7 @@ func TestSpliceRefusesWhatWouldPassByOmission(t *testing.T) {
 	}{
 		"no summary":       {doc("relations", "types"), "no BEGIN GENERATED summary region"},
 		"no relations":     {doc("summary", "types"), "no BEGIN GENERATED relations region"},
-		"uncovered type":   {doc("summary", "relations", "type note"), "type person has no generated section"},
+		"uncovered type":   {doc("summary", "relations", "type note", "type deal"), "type person has no generated section"},
 		"twice":            {doc("summary", "relations", "types", "type note"), "type note is generated 2 times"},
 		"unknown type":     {doc("summary", "relations", "types", "type ghost"), "type ghost is not in the demo schema"},
 		"unknown region":   {doc("summary", "relations", "types", "tables"), `unknown region "tables"`},
@@ -126,5 +133,33 @@ func TestSpliceRefusesWhatWouldPassByOmission(t *testing.T) {
 				t.Errorf("want a problem containing %q, got:\n%s", c.want, joined)
 			}
 		})
+	}
+}
+
+func TestUnrenderableSchemaFailsLoudly(t *testing.T) {
+	var s schemaDoc
+	if err := decode([]byte(`{"provenance": {"preset": "x", "version": "1"}, "types": [], "brand_new": 1}`), &s); err == nil {
+		t.Error("an unknown top-level key decoded silently")
+	}
+	if err := decode([]byte(`{"provenance": {"preset": "x", "version": "1"}, "types": [{"name": "a", "brand_new": true}]}`), &s); err == nil {
+		t.Error("an unknown type key decoded silently")
+	}
+	bad := schemaDoc{Types: []typeDef{
+		{Name: "a", Layout: "shard", Format: "md"},
+		{Name: "b", Layout: "file", Format: "md", Relations: []relation{{Predicate: "p", To: []string{"a"}, Kind: "weighted"}}},
+	}}
+	joined := strings.Join(validate(&bad), "\n")
+	for _, want := range []string{`type a: layout "shard"`, `relation p has kind "weighted"`} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("want %q in:\n%s", want, joined)
+		}
+	}
+}
+
+func TestSentenceKeepsQuestionMarks(t *testing.T) {
+	for in, want := range map[string]string{"a": "a.", "a.": "a.", "a?": "a?", "a!": "a!"} {
+		if got := sentence(in); got != want {
+			t.Errorf("sentence(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

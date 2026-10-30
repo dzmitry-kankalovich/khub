@@ -14,5 +14,5 @@
 - [ ] `CHANGELOG.md` updated (if user-facing)
 - [ ] Docs updated (if the command surface or schema changed — regenerate with
       `bash parity/tools/gen_cli_reference.sh`; preset pages with
-      `go run ./parity/tools/presetdocs -bin ./khub`)
+      `go run ./parity/tools/presetdocs`)
 - [ ] Surfaces stay schema-generic — no per-type branching in `internal/cli/`

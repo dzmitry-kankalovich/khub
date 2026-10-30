@@ -4,7 +4,7 @@
 
 `khub init firm-ops ./my-hub` seeds a workspace from it. For a hands-on first run, start with [`getting-started.md`](getting-started.md); to author or extend the types yourself, see [`schema.md`](schema.md).
 
-The tables between `GENERATED` markers on this page are generated from `khub schema --format json` against a workspace seeded from the preset; regenerate them with `go run ./parity/tools/presetdocs -bin ./khub`, and CI fails when they drift from `presets/firm-ops/`. The prose around them is written by hand.
+The tables between `GENERATED` markers on this page are generated from `khub schema --format json` against a workspace seeded from the preset; regenerate them with `go run ./parity/tools/presetdocs` (it builds khub fresh from the checkout), and CI fails when they drift from `presets/firm-ops/`. The prose around them is written by hand.
 
 <!-- BEGIN GENERATED summary -->
 
@@ -57,7 +57,7 @@ A pipeline deal; the pre-sale entity that converts into a project.
 
 <!-- BEGIN GENERATED type opportunity -->
 
-Layout `folder`, format `md`, path `opportunities`, ids `slug`.
+Layout `folder`, format `md`, stored at `opportunities/{slug}/_index.md`, ids `slug`.
 
 Record one when a possible piece of work with a named client is first mentioned — record it at 'we might', not at 'we won'.
 
@@ -83,7 +83,7 @@ A delivery engagement; the post-sale consulting work.
 
 <!-- BEGIN GENERATED type project -->
 
-Layout `folder`, format `md`, path `projects`, ids `slug`.
+Layout `folder`, format `md`, stored at `projects/{slug}/_index.md`, ids `slug`.
 
 Record one when work is agreed and has an owner; the opportunity that produced it becomes its origin.
 
@@ -103,7 +103,7 @@ Relations: `client` → client (required); `owner` → person (required); `team`
 
 <!-- END GENERATED type project -->
 
-`external_repo` names the delivery repo as `owner/name`.
+`active` says whether the engagement is ongoing. `external_repo` names the delivery repo as `owner/name`.
 
 ### meeting
 
@@ -111,7 +111,7 @@ An engagement touchpoint; a processed note tied to what it is about.
 
 <!-- BEGIN GENERATED type meeting -->
 
-Layout `file`, format `md`, path `meetings`, ids `slug`.
+Layout `file`, format `md`, stored at `meetings/{slug}.md`, ids `slug`.
 
 Record one when a call happens that produced a decision, a commitment, or a next step.
 
@@ -137,7 +137,7 @@ Raw meeting capture; the unprocessed export from the recording tool.
 
 <!-- BEGIN GENERATED type transcript -->
 
-Layout `file`, format `md`, path `transcripts`, ids `slug`.
+Layout `file`, format `md`, stored at `transcripts/{slug}.md`, ids `slug`.
 
 Record one when a recording or written record of a call exists and needs to be findable later.
 
@@ -165,7 +165,7 @@ An atomic thought or note that matures through stages.
 
 <!-- BEGIN GENERATED type fragment -->
 
-Layout `file`, format `md`, path `fragments`, ids `slug`.
+Layout `file`, format `md`, stored at `fragments/{slug}.md`, ids `slug`.
 
 Record one when something worth keeping is said that fits no other type yet — a signal, a quote, an observation.
 
@@ -188,7 +188,7 @@ A proven outcome drawn from a delivered engagement.
 
 <!-- BEGIN GENERATED type case-study -->
 
-Layout `file`, format `md`, path `case-studies`, ids `slug`.
+Layout `file`, format `md`, stored at `case-studies/{slug}.md`, ids `slug`.
 
 Record one when delivered work becomes a story worth telling outside the firm.
 
@@ -210,7 +210,7 @@ A business-development relationship that feeds opportunities and projects.
 
 <!-- BEGIN GENERATED type partnership -->
 
-Layout `folder`, format `md`, path `partnerships`, ids `slug`.
+Layout `folder`, format `md`, stored at `partnerships/{slug}/_index.md`, ids `slug`.
 
 Record one when a standing relationship with another firm is established or changes.
 
@@ -236,7 +236,7 @@ A team member; the target of `owner` and `team` edges across the graph.
 
 <!-- BEGIN GENERATED type person -->
 
-Layout `file`, format `md`, path `identity/team`, ids `slug`.
+Layout `file`, format `md`, stored at `identity/team/{slug}.md`, ids `slug`.
 
 Record one when a human is named who we will refer to again — ours, a client's, or a partner's.
 
@@ -256,7 +256,7 @@ A client organization; the party behind opportunities, projects, and case studie
 
 <!-- BEGIN GENERATED type client -->
 
-Layout `file`, format `md`, path `clients`, ids `slug`.
+Layout `file`, format `md`, stored at `clients/{slug}.md`, ids `slug`.
 
 Record one when an organisation is named that we work with, pitch to, or are introduced to.
 

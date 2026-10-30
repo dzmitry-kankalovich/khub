@@ -4,7 +4,7 @@
 
 The preset is the merge, made in 0.6.0, of the old `build-hub` (seventeen types) and `build-lite` (six). Six of its types, `prd`, `arc42`, `requirement`, `adr`, `component` and `repo`, are what `build-lite` 0.3.0 shipped and kb 0.14.0 still ships; the other five are new in 0.6.0.
 
-The preset is the source of truth for its schema. The tables between `GENERATED` markers on this page are generated from `khub schema --format json` against a workspace seeded from it; regenerate them with `go run ./parity/tools/presetdocs -bin ./khub`, and CI fails when they drift from `presets/build-hub/`. The prose around them is written by hand.
+The preset is the source of truth for its schema. The tables between `GENERATED` markers on this page are generated from `khub schema --format json` against a workspace seeded from it; regenerate them with `go run ./parity/tools/presetdocs` (it builds khub fresh from the checkout), and CI fails when they drift from `presets/build-hub/`. The prose around them is written by hand.
 
 <!-- BEGIN GENERATED summary -->
 
@@ -66,19 +66,19 @@ index.md                  # the whole corpus in one file — written by init, re
 
 ## The types
 
-Every md type ships a body template; headings a type gained after it first shipped are `optional: true`. Each type also carries the base block listed above; [Type reference](#type-reference) has every type's fields and relations.
+Every md type ships a body template; headings a type gained after it first shipped are `optional: true`. Each type also carries the base block listed above. These bullets are the hand-written reading copy and sit outside the generated gate; the exact fields, enum values and edges are in [Type reference](#type-reference).
 
 - **prd** (`knowledge/prd.md`, singleton, `required: true`) — the product source of truth. Template: Document Purpose*, Vision, Target Users, Glossary, Features, Non-Goals, Deferred*, Success Metrics, Roadmap*, Alternatives & Recommendation*, Open Questions*, Assumptions Index*, Grounding Evidence*. Lenses: `scope`, `journeys`, `metrics`, `assumptions`. Absorbs the old hub's roadmap and glossary as sections.
 - **arc42** (`knowledge/arc42.md`, singleton) — arc42's twelve sections under docs.arc42.org's names; the domain data model lives under Crosscutting Concepts as an ERD. Lenses: `direction`, `deferred`.
 - **capability** (`knowledge/capabilities/`) — a coherent chunk of product value, the map every other record hangs off. Title only. Use cases belong to one; requirements are placed in several. This is also facet's join key (`FUNC-*`). Template: a hint plus optional Scope; lens `named` (a capability is a noun phrase a customer would recognise, not a component name).
 - **actor** (`knowledge/actors/`) — a human role. Title only; a persona is its body. Template: optional Goals, Permissions. Automated triggers are not actors: a scheduled or event-driven use case carries `trigger` instead of an actor called "System".
-- **use-case** (`knowledge/use-cases/`) — one goal one actor achieves, or a longer flow; the length lives in the body. `trigger: human | scheduled | event | external` (required). Edges: `actor` → actor, `capability` → capability, `served_by` → component (many, inverse `serves`). Template follows facet's use-case block: Preconditions, Main flow, Alternative flows*, Exception flows*, Postconditions. Lenses: `actor` (when `trigger: human`, the flow names who performs it), `served` (every step in the main flow names a component that exists in `served_by`), `observable` (postconditions can be checked from outside).
-- **requirement** (`knowledge/requirements/`) — a rule the system must satisfy or never violate. `kind: functional | non-functional | constraint | business-rule` (required); `enforcement: ui | backend | database | external | review` (optional; what holds the rule up, and what breaks it silently). Edges: `capabilities` → capability (many), `use_cases` → use-case (many), `realized_in` → component (many). Template: no headings, one statement, EARS-friendly. Lenses: `single`, `testable`, `measurable` (when non-functional), `violation` (when constraint), `realized`. `kind: constraint` and `kind: non-functional` absorb the old hub's boundary and quality-attribute; `kind: business-rule` absorbs facet's rules, whose type becomes a tag.
-- **adr** (`knowledge/decisions/`) — any decision record, product or technical: a choice made, rejected or revisited between real alternatives. `status: proposed | accepted | rejected` (required). Edges: `supersedes` → adr (inverse `superseded`, acyclic), `affects` → any (many; the blast-radius query that earns the type). Dated id. Template: Context, Alternatives*, Decision, Consequences, Prevents*. Lenses: `alternatives`, `consequences`, `reversal`, `rule`, `proposed`.
-- **system** (`knowledge/systems/`) — a group of components with one owner and one boundary: C4's software system, Backstage's System. Title and `owner`. No stored edges; `component.system` points at it and `system.components` is computed. A one-system workspace never creates one and loses nothing. A vendor is not a system: it has APIs, not components we can name, so it stays a component with `kind: external`.
-- **component** (`knowledge/components/`) — a part of the system that can break, be owned, or be swapped. `kind: service | library | external` (required); `stack`; `owner` (text, slug form); `lifecycle: experimental | production | deprecated`; `tier: tier-1 | tier-2 | tier-3`. Edges: `system` → system, `repo` → repo (ours only; an external has no codebase), `consumes` → api (many, inverse `consumed_by`). Base `depends_on` carries component → component and component → external component, which is what makes *what breaks when this vendor changes* a graph walk. Template: optional Responsibilities, Interfaces, Operational notes. Lenses: `boundary`, `blast` (when external), `located` (when service or library), `owned` (an ownerless component is the gap a catalog exists to expose).
-- **api** (`knowledge/apis/`) — an interface a component promises: `kind: rest | graphql | grpc | events | data` (required), `status: proposed | active | deprecated` (required). Edge: `provider` → component (required, so `check` catches an API nobody owns; a vendor API's provider is the external component). Consumers are the computed inverse of `component.consumes`. The machine spec (OpenAPI, AsyncAPI, a schema) stays a file linked via `resource`; policy prose (versioning, auth, idempotency) is the body. Template: optional Versioning, Auth, Idempotency. Lenses: `spec` (a live API names its spec file), `consumed` (the consumers are in the graph).
-- **repo** (`knowledge/repos/`) — a codebase in the registry: `repo` as `org/name` (pattern, loose; tighten to your org), `status: active | archived` (required). `component.repo` must resolve here. Template: optional What lives here, What does not. Lenses: `remote`, `archived`.
+- **use-case** (`knowledge/use-cases/`) — one goal one actor achieves, or a longer flow; the length lives in the body. A required `trigger` says whether a human, a schedule, an event or an external call starts it. Edges: `actor`, `capability`, and `served_by`, the components that serve it. Template follows facet's use-case block: Preconditions, Main flow, Alternative flows*, Exception flows*, Postconditions. Lenses: `actor` (when `trigger: human`, the flow names who performs it), `served` (every step in the main flow names a component that exists in `served_by`), `observable` (postconditions can be checked from outside).
+- **requirement** (`knowledge/requirements/`) — a rule the system must satisfy or never violate. A required `kind`, and an optional `enforcement`: what holds the rule up, and what breaks it silently. Edges: `capabilities`, `use_cases`, `realized_in`. Template: no headings, one statement, EARS-friendly. Lenses: `single`, `testable`, `measurable` (when non-functional), `violation` (when constraint), `realized`. `kind: constraint` and `kind: non-functional` absorb the old hub's boundary and quality-attribute; `kind: business-rule` absorbs facet's rules, whose type becomes a tag.
+- **adr** (`knowledge/decisions/`) — any decision record, product or technical: a choice made, rejected or revisited between real alternatives. A required `status`. Edges: `supersedes`, an earlier adr, and `affects`, anything (the blast-radius query that earns the type). Dated id. Template: Context, Alternatives*, Decision, Consequences, Prevents*. Lenses: `alternatives`, `consequences`, `reversal`, `rule`, `proposed`.
+- **system** (`knowledge/systems/`) — a group of components with one owner and one boundary: C4's software system, Backstage's System. Title and `owner`. No stored edges of its own; `component.system` points at it, and a system's components are that edge walked inbound (`khub neighbors <sys> --in --predicate system`). A one-system workspace never creates one and loses nothing. A vendor is not a system: it has APIs, not components we can name, so it stays a component with `kind: external`.
+- **component** (`knowledge/components/`) — a part of the system that can break, be owned, or be swapped. A required `kind` (service, library or external), plus `stack`, `owner` (text, slug form), `lifecycle` and `tier`. Edges: `system`, `repo` (ours only; an external has no codebase), and `consumes`, the APIs it calls. Base `depends_on` carries component → component and component → external component, which is what makes *what breaks when this vendor changes* a graph walk. Template: optional Responsibilities, Interfaces, Operational notes. Lenses: `boundary`, `blast` (when external), `located` (when service or library), `owned` (an ownerless component is the gap a catalog exists to expose).
+- **api** (`knowledge/apis/`) — an interface a component promises: a required `kind` and `status`. Edge: `provider` (required, so `check` catches an API nobody owns; a vendor API's provider is the external component). Consumers are the computed inverse of `component.consumes`. The machine spec (OpenAPI, AsyncAPI, a schema) stays a file linked via `resource`; policy prose (versioning, auth, idempotency) is the body. Template: optional Versioning, Auth, Idempotency. Lenses: `spec` (a live API names its spec file), `consumed` (the consumers are in the graph).
+- **repo** (`knowledge/repos/`) — a codebase in the registry: `repo` as `org/name` (the pattern is loose; tighten it to your org) and a required `status`. `component.repo` must resolve here. Template: optional What lives here, What does not. Lenses: `remote`, `archived`.
 
 ## Relation vocabulary
 
@@ -264,7 +264,7 @@ What each type adds to the base block: storage, the `when` line an agent reads t
 
 ### prd
 
-Layout `singleton`, format `md`, path `knowledge/prd.md`. Required: `check` fails until one exists. Exempt from the orphan sweep.
+Layout `singleton`, format `md`, stored at `knowledge/prd.md`. Required: `check` fails until one exists. Exempt from the orphan sweep.
 
 Record one when someone states what the product is for, who it serves, or what is deliberately out of scope.
 
@@ -276,7 +276,7 @@ Relations: only the base edges.
 
 ### arc42
 
-Layout `singleton`, format `md`, path `knowledge/arc42.md`. Exempt from the orphan sweep.
+Layout `singleton`, format `md`, stored at `knowledge/arc42.md`. Exempt from the orphan sweep.
 
 Record one when the shape of the system is described or changes — context, building blocks, data model, a crosscutting concern.
 
@@ -288,7 +288,7 @@ Relations: only the base edges.
 
 ### capability
 
-Layout `file`, format `md`, path `knowledge/capabilities`, ids `cap-slug`.
+Layout `file`, format `md`, stored at `knowledge/capabilities/{slug}.md`, ids `cap-slug`.
 
 Record one when a coherent chunk of product value is named as a thing the product does — the map that use cases belong to and requirements are placed in.
 
@@ -300,7 +300,7 @@ Relations: only the base edges.
 
 ### actor
 
-Layout `file`, format `md`, path `knowledge/actors`, ids `act-slug`.
+Layout `file`, format `md`, stored at `knowledge/actors/{slug}.md`, ids `act-slug`.
 
 Record one when a human role is named that uses the product — a customer, an admin, an operator. Not a system or a scheduler; those are a use case's `trigger`.
 
@@ -312,7 +312,7 @@ Relations: only the base edges.
 
 ### use-case
 
-Layout `file`, format `md`, path `knowledge/use-cases`, ids `uc-slug`.
+Layout `file`, format `md`, stored at `knowledge/use-cases/{slug}.md`, ids `uc-slug`.
 
 Record one when someone describes what a user does end to end, or a flow the system runs on a schedule or an event. Record it when the flow is described, not when it ships.
 
@@ -325,7 +325,7 @@ Relations: `actor` → actor; `capability` → capability; `served_by` → compo
 
 ### requirement
 
-Layout `file`, format `md`, path `knowledge/requirements`, ids `req-slug`.
+Layout `file`, format `md`, stored at `knowledge/requirements/{slug}.md`, ids `req-slug`.
 
 Record one when a rule is stated that the system must satisfy or must never violate. "must", "never", "always", "policy", "has to" are the tells; a stated invariant is a record, not a reply.
 
@@ -339,7 +339,7 @@ Relations: `capabilities` → capability (many); `use_cases` → use-case (many)
 
 ### adr
 
-Layout `file`, format `md`, path `knowledge/decisions`, ids `ad-YYYY-MM-DD-slug`.
+Layout `file`, format `md`, stored at `knowledge/decisions/{slug}.md`, ids `ad-YYYY-MM-DD-slug`.
 
 Record one when a choice is made, rejected, or revisited between real alternatives — product or technical, including "we considered X and are not doing it". Capture the reasoning while it is still known.
 
@@ -352,7 +352,7 @@ Relations: `supersedes` → adr (acyclic, inverse `superseded`); `affects` → a
 
 ### system
 
-Layout `file`, format `md`, path `knowledge/systems`, ids `sys-slug`.
+Layout `file`, format `md`, stored at `knowledge/systems/{slug}.md`, ids `sys-slug`.
 
 Record one when a group of components is named as one thing with one owner and one boundary — a product, a platform, a deployable whole.
 
@@ -365,7 +365,7 @@ Relations: only the base edges.
 
 ### component
 
-Layout `file`, format `md`, path `knowledge/components`, ids `cmp-slug`.
+Layout `file`, format `md`, stored at `knowledge/components/{slug}.md`, ids `cmp-slug`.
 
 Record one when a part of the system is named as a thing that can break, be owned, or be swapped — a service, a library of ours, or a vendor dependency we sit on.
 
@@ -382,7 +382,7 @@ Relations: `system` → system; `repo` → repo; `consumes` → api (many, inver
 
 ### api
 
-Layout `file`, format `md`, path `knowledge/apis`, ids `api-slug`.
+Layout `file`, format `md`, stored at `knowledge/apis/{slug}.md`, ids `api-slug`.
 
 Record one when an interface is agreed, published, or versioned — a REST or GraphQL surface, a gRPC service, an event stream, a data feed.
 
@@ -396,7 +396,7 @@ Relations: `provider` → component (required). Computed: `consumed_by` → comp
 
 ### repo
 
-Layout `file`, format `md`, path `knowledge/repos`, ids `rp-slug`.
+Layout `file`, format `md`, stored at `knowledge/repos/{slug}.md`, ids `rp-slug`.
 
 Record one when a codebase is named that holds part of this system — a service's repo, a shared library, a monorepo group.
 

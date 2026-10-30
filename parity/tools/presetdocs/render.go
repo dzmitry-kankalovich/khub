@@ -247,19 +247,75 @@ func renderRelations(s *schemaDoc, base *baseDoc) string {
 	return b.String()
 }
 
+// validate refuses a schema the generator cannot render faithfully. A layout
+// or relation kind it does not know would otherwise come out as a wrong file
+// pattern or a silently flattened edge.
+func validate(s *schemaDoc) []string {
+	var problems []string
+	for _, t := range s.Types {
+		if _, err := filePatterns(t); err != nil {
+			problems = append(problems, fmt.Sprintf("type %s: %v", t.Name, err))
+		}
+		if _, _, _, err := idPrefixByField(t.IDPrefix); err != nil {
+			problems = append(problems, fmt.Sprintf("type %s: %v", t.Name, err))
+		}
+		for _, r := range t.Relations {
+			switch r.Kind {
+			case "typed", "union", "any":
+			default:
+				problems = append(problems, fmt.Sprintf("type %s: relation %s has kind %q, which presetdocs cannot render", t.Name, r.Predicate, r.Kind))
+			}
+		}
+	}
+	return problems
+}
+
+// filePatterns spells where a type's entities live on disk, from its layout,
+// format and path alone — the conventions docs/schema.md states under
+// "Storage config". No type is special-cased.
+func filePatterns(t typeDef) ([]string, error) {
+	if len(t.Paths) > 0 {
+		return t.Paths, nil
+	}
+	dir := strp(t.Path)
+	switch t.Layout {
+	case "file":
+		return []string{dir + "/{slug}." + t.Format}, nil
+	case "folder":
+		return []string{dir + "/{slug}/_index." + t.Format}, nil
+	case "singleton", "collection":
+		if dir == "" {
+			return nil, fmt.Errorf("layout %s with no path", t.Layout)
+		}
+		return []string{dir}, nil
+	}
+	return nil, fmt.Errorf("layout %q, which presetdocs cannot render", t.Layout)
+}
+
 func renderType(t typeDef, base *baseDoc) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Layout `%s`, format `%s`", t.Layout, t.Format)
-	switch {
-	case len(t.Paths) > 0:
-		fmt.Fprintf(&b, ", paths %s", codeList(t.Paths))
-	case t.Path != nil:
-		fmt.Fprintf(&b, ", path %s", code(*t.Path))
+	patterns, _ := filePatterns(t) // validate refused the error case
+	fmt.Fprintf(&b, "Layout `%s`, format `%s`, stored at %s", t.Layout, t.Format, codeList(patterns))
+	if t.Layout == "collection" {
+		b.WriteString(" (every entity a row of that one file)")
 	}
 	if t.IDShape != nil {
 		fmt.Fprintf(&b, ", ids %s", code(*t.IDShape))
 	}
 	b.WriteString(".")
+	if by, members, ok, _ := idPrefixByField(t.IDPrefix); ok {
+		pairs := make([]string, len(members))
+		for i, m := range members {
+			pairs[i] = code(m.value) + " → " + code(m.prefix)
+		}
+		fmt.Fprintf(&b, " The id prefix follows %s: %s.", code(by), strings.Join(pairs, ", "))
+	}
+	if t.IDOrdinal {
+		b.WriteString(" Accepts a legacy `NNN-` slug ordinal.")
+	}
+	if t.PathRefs {
+		b.WriteString(" A relation value that names no entity may name a workspace path.")
+	}
 	if t.Required {
 		b.WriteString(" Required: `check` fails until one exists.")
 	}
@@ -267,7 +323,7 @@ func renderType(t typeDef, base *baseDoc) string {
 		b.WriteString(" Exempt from the orphan sweep.")
 	}
 	if t.When != nil && strings.TrimSpace(*t.When) != "" {
-		fmt.Fprintf(&b, "\n\nRecord one when %s.", strings.TrimRight(strings.Join(strings.Fields(*t.When), " "), "."))
+		fmt.Fprintf(&b, "\n\nRecord one when %s", sentence(strings.Join(strings.Fields(*t.When), " ")))
 	}
 
 	var rows []string
@@ -348,6 +404,14 @@ func relationShape(r relation) string {
 		s += " (" + strings.Join(q, ", ") + ")"
 	}
 	return s
+}
+
+// sentence ends s with a period unless it already ends a sentence.
+func sentence(s string) string {
+	if strings.HasSuffix(s, ".") || strings.HasSuffix(s, "?") || strings.HasSuffix(s, "!") {
+		return s
+	}
+	return s + "."
 }
 
 func plural(n int, noun string) string {

@@ -223,8 +223,9 @@ func (r *resolver) scalar(n ast.Node) (any, error) {
 // (issue #80). It also keeps a trailing `# comment` inside the value.
 //
 // A single-line scalar keeps goccy's value (ok false). So does any source
-// whose folded words are not the leading words of goccy's value — the check
-// that the token's Origin holds the scalar and nothing else.
+// whose folded words are not goccy's words, or their prefix with only a
+// `#` comment after it — the check that the token's Origin holds the scalar
+// and nothing else.
 func foldPlain(origin, value string) (string, bool) {
 	src := strings.ReplaceAll(origin, "\r\n", "\n")
 	src = strings.ReplaceAll(src, "\r", "\n")
@@ -233,7 +234,8 @@ func foldPlain(origin, value string) (string, bool) {
 	}
 	var b strings.Builder
 	blank, started := 0, false
-	for _, line := range strings.Split(src, "\n") {
+	lines := strings.Split(src, "\n")
+	for n, line := range lines {
 		line = strings.Trim(line, " \t")
 		comment := false
 		for i := 0; i < len(line); i++ {
@@ -258,7 +260,13 @@ func foldPlain(origin, value string) (string, bool) {
 			started, blank = true, 0
 		}
 		if comment {
-			break // a comment ends a plain scalar
+			// A comment ends a plain scalar. Text on a later line is malformed
+			// (PyYAML rejects it) and goccy kept it in the value; folding it
+			// away would drop it silently, so goccy's value stands.
+			if strings.TrimSpace(strings.Join(lines[n+1:], "")) != "" {
+				return "", false
+			}
+			break
 		}
 	}
 	folded := b.String()
@@ -270,6 +278,10 @@ func foldPlain(origin, value string) (string, bool) {
 		if want[i] != got[i] {
 			return "", false
 		}
+	}
+	// goccy may only have more words when they are the comment it kept.
+	if len(got) > len(want) && !strings.HasPrefix(got[len(want)], "#") {
+		return "", false
 	}
 	return folded, true
 }

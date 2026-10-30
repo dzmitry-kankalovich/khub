@@ -94,6 +94,9 @@ func TestFoldPlainSpec(t *testing.T) {
 		{"d:\n  a\n  b\n", "a b"},
 		{"d: a  b\n", "a  b"},
 		{"d: a#b\n  c\n", "a#b c"},
+		// Text after a comment line is malformed (PyYAML rejects it); the fold
+		// must not drop `e`, so goccy's value stands.
+		{"d: a\n  -b \n  c # d\n  e\n", "a -b  c # d e"},
 		{"- a \n  -b \n  c\n", ""},
 	}
 	for _, c := range cases {

@@ -38,7 +38,10 @@ single trailing space before a plain fold is kept: it reads back exactly.
 The reader departs from goccy the same way: `foldPlain` in `yamlload.go`
 folds a multi-line plain scalar per the spec, because goccy keeps the white
 space before each break once a continuation line starts with `-`.
-`FuzzStringRoundTrip` holds the property: any string emitted reads back equal.
+`FuzzStringRoundTrip` holds the property: any string outside the documented
+loader gaps reads back equal once emitted. The gaps it skips are U+2028,
+U+2029 and U+0085, `<<`, values that resolve as another type under YAML 1.1,
+non-printable characters and invalid UTF-8.
 
 ## Why goccy is parser-only
 

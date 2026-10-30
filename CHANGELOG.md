@@ -12,8 +12,14 @@ Notable changes to khub. Format follows [Keep a Changelog](https://keepachangelo
   added a space (a Windows path gained one), a plain break after two spaces
   dropped one, and `get` read a plain value with a doubled space at each fold
   after a line starting with `-`. A file an older khub already wrote with the
-  first shape holds the extra space in its bytes; editing the value again
-  rewrites it.
+  first shape holds the extra space in its bytes, and one written with the
+  second shape has already lost the space; editing the value again rewrites
+  either.
+- **Multi-line plain values read per the YAML spec.** A plain value written
+  across lines, by hand or by khub, now folds the way PyYAML and ruamel fold
+  it, so `get` and `search` can return a different value for an existing
+  file: a trailing `# note` is a comment, no longer part of the value; spaces
+  and tabs before a line break are dropped; a tab inside a line is kept.
 
 ## [0.30.0] — 2026-10-28
 

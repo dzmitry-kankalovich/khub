@@ -11,26 +11,39 @@ import (
 	"syscall"
 )
 
-// CheckMkdirAll is MkdirAll without the mkdir: OpenPath's refusals, and a
-// file standing where a directory must go.
+// CheckMkdirAll is MkdirAll without the mkdir, failing with the error
+// MkdirAll would return: OpenPath's refusals, then MkdirAll's own walk, whose
+// Stat names a file standing where a middle directory must go. A file at the
+// last component passes that walk and fails in os.Root.MkdirAll, which
+// reports it as mkdirat EEXIST on the root-relative path (every platform:
+// Windows maps the NT collision status to the same syscall.EEXIST).
 func CheckMkdirAll(root, path string) error {
 	r, rel, err := OpenPath(root, path)
 	if err != nil {
 		return err
 	}
 	defer r.Close()
-	part := ""
-	for _, name := range strings.Split(rel, string(filepath.Separator)) {
-		part = filepath.Join(part, name)
+	parts := strings.Split(rel, string(filepath.Separator))
+	part, prev := "", ""
+	for i, name := range parts {
+		prev, part = part, filepath.Join(part, name)
 		info, err := r.Stat(part)
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil // MkdirAll creates the rest
+			// MkdirAll creates the rest. Windows reports a path through a
+			// file as missing (unix fails the Stat with ENOTDIR first), and
+			// os.Root.MkdirAll then fails opening that file as a directory.
+			if i > 0 {
+				if above, serr := r.Stat(prev); serr == nil && !above.IsDir() {
+					return &fs.PathError{Op: "openat", Path: prev, Err: syscall.ENOTDIR}
+				}
+			}
+			return nil
 		}
 		if err != nil {
 			return err
 		}
-		if !info.IsDir() {
-			return &fs.PathError{Op: "mkdir", Path: path, Err: syscall.ENOTDIR}
+		if i == len(parts)-1 && !info.IsDir() {
+			return &fs.PathError{Op: "mkdirat", Path: rel, Err: syscall.EEXIST}
 		}
 	}
 	return nil

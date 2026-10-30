@@ -14,4 +14,5 @@ steps:
 - argv: ["unlink", "req-t", "realized_in", "cmp-c", "--dry-run"]
 - argv: ["unlink", "cmp-c", "related", "req-t", "--dry-run"]
 - argv: ["remove", "req-t", "--dry-run"]
+- argv: ["remove", "cmp-c", "--force", "--dry-run"]
 - sh: "test ! -e .khub/generated"

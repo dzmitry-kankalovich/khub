@@ -179,3 +179,37 @@ func TestDryRunEditReportsNoChange(t *testing.T) {
 		t.Fatal("a new day's `updated` bump reported no change")
 	}
 }
+
+// Filesystem refusals khub reaches before publishing — the lock directory,
+// a file where an entity's folder must go — fail the dry run with the
+// write's own error, byte for byte.
+func TestDryRunFailsWithTheWritesPathError(t *testing.T) {
+	setups := map[string]func(t *testing.T, ws string){
+		"lock directory is a file": func(t *testing.T, ws string) {
+			writeFile(t, filepath.Join(ws, ".khub", "generated"), "x")
+		},
+		"entity folder is a file": func(t *testing.T, ws string) {
+			mkdirAll(t, filepath.Join(ws, "opportunities"))
+			writeFile(t, filepath.Join(ws, "opportunities", "deal"), "x")
+		},
+	}
+	for name, setup := range setups {
+		t.Run(name, func(t *testing.T) {
+			ws := newWS(t, "firm-ops")
+			seed(t, ws, "clients/initech.md", kv("type", "client", "name", "Initech"))
+			setup(t, ws)
+			add := func(dry bool) error {
+				_, err := Create(ws, "opportunity", CreateOpts{
+					Fields: fields("name", "Deal", "client", "initech"), UseTemplate: true, DryRun: dry})
+				return err
+			}
+			before := snapshot(t, ws)
+			dry := add(true)
+			requireSameTree(t, before, snapshot(t, ws))
+			real := add(false)
+			if dry == nil || real == nil || dry.Error() != real.Error() {
+				t.Fatalf("dry = %v, real = %v", dry, real)
+			}
+		})
+	}
+}

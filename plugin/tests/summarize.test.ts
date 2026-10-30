@@ -111,7 +111,12 @@ test('a write run with --dry-run reads as a preview, never as a write', () => {
   expect(say('khub unlink cmp-search depends_on cmp-storage --dry-run --format json', F.unlink_dry).line).toBe(
     'dry run · ⇢ cmp-search depends_on cmp-storage',
   )
-  expect(say('khub remove cmp-search --dry-run --format json', F.remove_refused).tone).toBe('bad')
+  expect(say('khub remove cmp-search --dry-run --format json', F.remove_refused)).toEqual({
+    head: 'khub remove cmp-search',
+    line: `dry run · ✗ inbound_edge_refusal: Refusing to remove component 'cmp-search': 1 inbound edge resolves to it. Pass --force to override`,
+    tone: 'bad',
+  })
+  expect(say('khub remove cmp-search --format json', F.remove_refused).line).toMatch(/^✗ inbound_edge_refusal: /)
 })
 
 test('get shows the id, the title and the edge count', () => {

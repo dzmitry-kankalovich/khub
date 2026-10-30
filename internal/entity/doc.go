@@ -101,10 +101,15 @@ func (s sink) remove(root, path string, recursive bool) error {
 	return fsio.Remove(root, path, recursive)
 }
 
-// locked runs fn under the workspace lock, or bare for a dry run: a dry run
-// is a read, and reads create no lock.
+// locked runs fn under the workspace lock. A dry run takes no lock — it is a
+// read, and reads create none — but first runs the lock path's checks, so a
+// lock directory the write could not make refuses the dry run too.
 func locked[T any](root string, out sink, fn func() (T, error)) (T, error) {
 	if out.dry {
+		if err := fsio.CheckLock(root); err != nil {
+			var zero T
+			return zero, err
+		}
 		return fn()
 	}
 	return fsio.Locked(root, fn)

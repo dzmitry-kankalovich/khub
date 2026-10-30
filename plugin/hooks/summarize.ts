@@ -193,7 +193,10 @@ export function summarize(call: Simple, json: unknown, note: string): Summary {
   const head = headOf(call)
   const refused = refusal(json)
 
-  if (refused) return { head, line: clean(`✗ ${refused.code}: ${refused.message}`), tone: 'bad' }
+  // A write's dry run says so on every line, a refusal included: the head omits the flag.
+  const dry = isWrite(call) && isDryRun(call) ? 'dry run · ' : ''
+
+  if (refused) return { head, line: clean(`${dry}✗ ${refused.code}: ${refused.message}`), tone: 'bad' }
 
   // With no document the call is still running, or it printed prose.
   if (json === undefined) return { head, line: clean(firstLine(note)), tone: 'plain' }
@@ -201,7 +204,7 @@ export function summarize(call: Simple, json: unknown, note: string): Summary {
   const result = resultOf(call, json, note)
 
   // A write's dry run reads as what the write would do, in the plain tone of a read.
-  if (isWrite(call) && isDryRun(call)) return { head, line: clean(`dry run · ${result.line}`), tone: 'plain' }
+  if (dry !== '') return { head, line: clean(`${dry}${result.line}`), tone: 'plain' }
 
   return { head, line: clean(result.line), tone: result.tone }
 }

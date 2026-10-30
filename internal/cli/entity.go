@@ -313,12 +313,34 @@ func registerRemove(root *cobra.Command) {
 					record.Set("type", result.Type)
 					record.Set("slug", result.Slug)
 					record.Set("removed", true)
-					verb := "Removed"
-					if dryRun {
-						record, verb = preview(record, true), "Would remove"
+					if !dryRun {
+						return Emit(record, format, func() {
+							fmt.Printf("Removed %s '%s'\n", result.Type, result.Slug)
+						})
 					}
-					return Emit(record, format, func() {
-						fmt.Printf("%s %s '%s'\n", verb, result.Type, result.Slug)
+					// What --force would leave dangling: the edges the guard
+					// would have refused on, empty without them.
+					inbound := make([]any, 0, len(result.Inbound))
+					for _, edge := range result.Inbound {
+						row := omap.New()
+						row.Set("id", edge.SourceType+"/"+edge.SourceSlug)
+						row.Set("predicate", edge.Predicate)
+						inbound = append(inbound, row)
+					}
+					record.Set("inbound", inbound)
+					return Emit(preview(record, true), format, func() {
+						fmt.Printf("Would remove %s '%s'\n", result.Type, result.Slug)
+						if len(result.Inbound) == 0 {
+							return
+						}
+						edges := "edges"
+						if len(result.Inbound) == 1 {
+							edges = "edge"
+						}
+						fmt.Printf("Would leave %d inbound %s dangling:\n", len(result.Inbound), edges)
+						for _, edge := range result.Inbound {
+							fmt.Printf("  %s/%s --%s-->\n", edge.SourceType, edge.SourceSlug, edge.Predicate)
+						}
 					})
 				}
 				refusal := errs.InboundEdgeRefusal(result.Type, result.Slug, len(result.Inbound))

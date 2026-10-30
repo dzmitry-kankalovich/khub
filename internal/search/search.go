@@ -56,15 +56,14 @@ const (
 	createFTS = "CREATE VIRTUAL TABLE fts USING " +
 		"fts5(title, body, type UNINDEXED, slug UNINDEXED, path UNINDEXED)"
 	insertFTS = "INSERT INTO fts VALUES (?,?,?,?,?)"
-	matchFTS  = "SELECT type, slug, title, rank AS score, " +
-		"snippet(fts, -1, '', '', '…', 12) AS snip, path, rowid, " +
-		sectionCols + " FROM fts WHERE fts MATCH ? ORDER BY rank LIMIT ?"
-	// sectionCols locate the reported snippet in the body (see section):
-	// the title's and the body's own snippets, to tell which column
-	// snippet(-1) chose, then the body snippet and the whole body with
-	// every match marked. They only read the row; rank is untouched.
-	sectionCols = "snippet(fts, 0, '', '', '…', 12), snippet(fts, 1, '', '', '…', 12), " +
-		"snippet(fts, 1, char(1), char(2), '', 12), highlight(fts, 1, char(1), char(2))"
+	// The snippet marks each match with ?3 and ?4, characters no indexed
+	// text holds (pickMarks), and match strips them, so the snippet a hit
+	// reports is what unmarked arguments give. The marks, and the title's
+	// own snippet, are what section reads; neither touches rank.
+	matchFTS = "SELECT type, slug, title, rank AS score, " +
+		"snippet(fts, -1, ?3, ?4, '…', 12) AS snip, path, rowid, " +
+		"snippet(fts, 0, ?3, ?4, '…', 12) " +
+		"FROM fts WHERE fts MATCH ?1 ORDER BY rank LIMIT ?2"
 	countFTS = "SELECT count(*) FROM fts WHERE fts MATCH ?"
 )
 
@@ -96,14 +95,14 @@ type Hit struct {
 	TitleMatch float64
 
 	rowid int64
-	loc   snippetLoc
+	// marked is the snippet with its matches marked, and titleMarked the
+	// title's own snippet, marked the same way; section reads both.
+	marked, titleMarked string
 }
 
-// snippetLoc is what match reads to place a hit's snippet in its body.
-type snippetLoc struct {
-	titleSnip, bodySnip string // snippet() of the title, of the body
-	marked, highlighted string // the body snippet, and the whole body, with matches marked
-}
+// marks are the strings snippet() puts around each match: one character
+// each that no indexed text holds, or both "" when every candidate occurs.
+type marks struct{ open, close string }
 
 // Result is one search's hits plus what a caller needs to judge them.
 type Result struct {
@@ -168,8 +167,8 @@ func Search(root, text string, opts Options) (Result, error) {
 	defer func() { _ = conn.Close() }() // Python's finally: conn.close() ignores errors
 
 	res := Result{Hits: []Hit{}, Malformed: len(idx.Malformed)}
-	bodyEnds := map[index.Node]int{}
-	if res.Searched, err = buildFTS(conn, root, idx, type_, bodyEnds); err != nil {
+	var mk marks
+	if res.Searched, mk, err = buildFTS(conn, root, idx, type_); err != nil {
 		return Result{}, err
 	}
 	var terms []string
@@ -184,7 +183,7 @@ func Search(root, text string, opts Options) (Result, error) {
 	if capped < 0 {
 		capped = 0 // a negative LIMIT is "unbounded" in SQLite
 	}
-	hits, err := match(conn, text, capped)
+	hits, err := match(conn, text, capped, mk)
 	if err != nil {
 		return Result{}, err
 	}
@@ -199,8 +198,9 @@ func Search(root, text string, opts Options) (Result, error) {
 		if ok && rtype.Storage.Layout == schema.LayoutCollection {
 			hits[i].Locator = hits[i].Path + "#" + hits[i].Slug
 		}
-		hits[i].Section = section(hits[i].Snippet, hits[i].loc,
-			bodyEnds[index.Node{Type: hits[i].Type, Slug: hits[i].Slug}])
+		node := index.Node{Type: hits[i].Type, Slug: hits[i].Slug}
+		hits[i].Section = section(hits[i], mk,
+			template.StripComments(idx.Body[node]), idx.Meta[node])
 	}
 	if len(hits) > 0 {
 		annotate(hits, idx, opts.Now, staleDays)
@@ -356,28 +356,28 @@ func annotate(hits []Hit, idx *index.Index, now time.Time, staleDays int) {
 // skipping the row loop beats a WHERE clause. Titles and bodies come from the
 // scan (index.BuildWithBodies), so no file is read or parsed twice.
 //
-// bodyEnds receives, per entity, where its body ends in the indexed body
-// column: FTSBody appends the frontmatter's string values after it.
-func buildFTS(conn *sqlite3.Conn, root string, idx *index.Index, type_ *string, bodyEnds map[index.Node]int) (int, error) {
+// It also returns the marks match asks snippet() for (pickMarks).
+func buildFTS(conn *sqlite3.Conn, root string, idx *index.Index, type_ *string) (int, marks, error) {
+	var seen [256]bool // every byte any indexed text holds
 	// The Python build either has FTS5 compiled in or it does not; here the
 	// extension is loaded per connection, so a load failure is the same
 	// "no FTS5 in this build" condition and takes the same located error.
 	if err := fts5.Register(conn); err != nil {
-		return 0, errs.FTSUnavailable(sqliteDetail(err))
+		return 0, marks{}, errs.FTSUnavailable(sqliteDetail(err))
 	}
 	if err := conn.Exec(createFTS); err != nil {
-		return 0, errs.FTSUnavailable(sqliteDetail(err))
+		return 0, marks{}, errs.FTSUnavailable(sqliteDetail(err))
 	}
 	if err := conn.Exec(rankFTS()); err != nil {
-		return 0, err
+		return 0, marks{}, err
 	}
 	if err := conn.Exec("BEGIN"); err != nil {
-		return 0, err
+		return 0, marks{}, err
 	}
 	defer func() { _ = conn.Exec("ROLLBACK") }()
 	stmt, _, err := conn.Prepare(insertFTS)
 	if err != nil {
-		return 0, err
+		return 0, marks{}, err
 	}
 	defer func() { _ = stmt.Close() }()
 
@@ -406,17 +406,20 @@ func buildFTS(conn *sqlite3.Conn, root string, idx *index.Index, type_ *string, 
 		// agent finds them. Removed rather than blanked: this text is what
 		// snippet() renders back, and a blanked scaffold's snippet is mostly
 		// empty columns.
-		body := template.StripComments(idx.Body[node])
-		if err := insertRow(stmt, ftsTitle(meta, node.Slug), canon.FTSBody(meta, body),
-			node.Type, node.Slug, filepath.ToSlash(rel)); err != nil {
-			return 0, err
+		title := ftsTitle(meta, node.Slug)
+		body := canon.FTSBody(meta, template.StripComments(idx.Body[node]))
+		for _, text := range []string{title, body} {
+			for i := 0; i < len(text); i++ {
+				seen[text[i]] = true
+			}
 		}
-		// FTSBody trims the joined text, so the body starts at its first
-		// non-space; its trailing space, if kept, is harmless to section.
-		bodyEnds[node] = len(strings.TrimLeftFunc(body, unicode.IsSpace))
+		if err := insertRow(stmt, title, body,
+			node.Type, node.Slug, filepath.ToSlash(rel)); err != nil {
+			return 0, marks{}, err
+		}
 		rows++
 	}
-	return rows, conn.Exec("COMMIT")
+	return rows, pickMarks(&seen), conn.Exec("COMMIT")
 }
 
 // Column weights for bm25: a word in the title counts titleWeight times a
@@ -487,7 +490,7 @@ func ftsTitle(meta *omap.Map, slug string) string {
 // `ORDER BY rank` is FTS5's optimized bm25 ordering (no per-row recompute);
 // snippet(..., -1, ...) picks the best-matching column, so a title hit excerpts
 // the title and a body hit excerpts the body.
-func match(conn *sqlite3.Conn, text string, limit int) ([]Hit, error) {
+func match(conn *sqlite3.Conn, text string, limit int, mk marks) ([]Hit, error) {
 	stmt, _, err := conn.Prepare(matchFTS)
 	if err != nil {
 		return nil, errs.BadSearchQuery(text, sqliteDetail(err))
@@ -499,22 +502,25 @@ func match(conn *sqlite3.Conn, text string, limit int) ([]Hit, error) {
 	if err := stmt.BindInt(2, limit); err != nil {
 		return nil, err
 	}
+	if err := stmt.BindText(3, mk.open); err != nil {
+		return nil, err
+	}
+	if err := stmt.BindText(4, mk.close); err != nil {
+		return nil, err
+	}
 	hits := []Hit{}
 	for stmt.Step() {
+		marked := stmt.ColumnText(4)
 		hits = append(hits, Hit{
-			Type:    stmt.ColumnText(0),
-			Slug:    stmt.ColumnText(1),
-			Title:   stmt.ColumnText(2),
-			Score:   stmt.ColumnFloat(3),
-			Snippet: stmt.ColumnText(4),
-			Path:    stmt.ColumnText(5),
-			rowid:   stmt.ColumnInt64(6),
-			loc: snippetLoc{
-				titleSnip:   stmt.ColumnText(7),
-				bodySnip:    stmt.ColumnText(8),
-				marked:      stmt.ColumnText(9),
-				highlighted: stmt.ColumnText(10),
-			},
+			Type:        stmt.ColumnText(0),
+			Slug:        stmt.ColumnText(1),
+			Title:       stmt.ColumnText(2),
+			Score:       stmt.ColumnFloat(3),
+			Snippet:     mk.strip(marked),
+			Path:        stmt.ColumnText(5),
+			rowid:       stmt.ColumnInt64(6),
+			marked:      marked,
+			titleMarked: stmt.ColumnText(7),
 		})
 	}
 	if err := stmt.Err(); err != nil {
@@ -544,45 +550,64 @@ func sqliteDetail(err error) string {
 	return msg
 }
 
-// Markers section asks snippet() and highlight() to put around each match.
-const markOpen, markClose = "\x01", "\x02"
-
-// section returns the heading path to the text a hit's snippet excerpts:
-// the Markdown ATX headings enclosing the snippet's first match in the
-// body, outermost first. It is nil when the snippet excerpts the title (a
-// tie between title and body goes to the title, as snippet() breaks it),
-// when that match falls in the frontmatter values indexed after the body,
-// or when no heading precedes it.
-//
-// The section follows the snippet, so the two always agree and ranking is
-// untouched. bodyEnd is where the body ends in the indexed column.
-func section(snippet string, loc snippetLoc, bodyEnd int) []string {
-	if snippet != loc.bodySnip || snippet == loc.titleSnip {
-		return nil
-	}
-	hl := loc.highlighted
-	start := 0
-	if loc.marked != "" {
-		if i := strings.Index(hl, loc.marked); i >= 0 {
-			start = i
+// pickMarks chooses the marks from the control characters no indexed
+// text holds, so stripping them restores the snippet byte for byte and a
+// mark in a snippet is always one snippet() put there. Tab, newline,
+// vertical tab, form feed and carriage return are never candidates.
+func pickMarks(seen *[256]bool) marks {
+	var free []string
+	for c := byte(1); c < 0x20 && len(free) < 2; c++ {
+		if (c < '\t' || c > '\r') && !seen[c] {
+			free = append(free, string(rune(c)))
 		}
 	}
-	at := strings.Index(hl[start:], markOpen)
-	if at < 0 {
+	if len(free) < 2 {
+		return marks{} // no section this search; the snippet is unchanged
+	}
+	return marks{open: free[0], close: free[1]}
+}
+
+func (mk marks) strip(s string) string {
+	if mk.open == "" {
+		return s
+	}
+	return strings.NewReplacer(mk.open, "", mk.close, "").Replace(s)
+}
+
+// section returns the heading path to the text a hit's snippet excerpts:
+// the Markdown ATX headings enclosing the snippet's first marked match,
+// or the snippet's start when it marks none (a phrase longer than the
+// snippet, or cut at its start), outermost first. It is nil when the
+// snippet excerpts the title (a tie goes to the title, as snippet() breaks
+// it), when that point falls in the frontmatter values indexed after the
+// body, or when no heading precedes it.
+//
+// The snippet is placed at its first occurrence in the body: snippet()
+// keeps the earliest of equally good fragments, and identical text scores
+// the same. body is the entity's body as indexed, comments stripped.
+func section(h Hit, mk marks, body string, meta *omap.Map) []string {
+	if mk.open == "" || h.marked == h.titleMarked {
 		return nil
 	}
-	at += start
-	// The column's own text: hl without its markers. at moves back by the
-	// marker bytes before it.
-	before := hl[:at]
-	offset := at - len(markOpen)*strings.Count(before, markOpen) -
-		len(markClose)*strings.Count(before, markClose)
-	text := strings.NewReplacer(markOpen, "", markClose, "").Replace(hl)
-	bodyEnd = min(bodyEnd, len(text))
-	if offset >= bodyEnd {
+	// snippet() adds "…" where it cut the column; drop it to get a
+	// fragment of the column's own text.
+	frag := strings.TrimSuffix(strings.TrimPrefix(h.marked, "…"), "…")
+	rel := 0
+	if at := strings.Index(frag, mk.open); at >= 0 {
+		rel = len(mk.strip(frag[:at]))
+	}
+	col := canon.FTSBody(meta, body)
+	start := strings.Index(col, mk.strip(frag))
+	if start < 0 {
 		return nil
 	}
-	return headingPath(text[:bodyEnd], offset)
+	// FTSBody trims the joined text, so the body starts at its first
+	// non-space and the frontmatter values follow it.
+	bodyEnd := min(len(strings.TrimLeftFunc(body, unicode.IsSpace)), len(col))
+	if start+rel >= bodyEnd {
+		return nil
+	}
+	return headingPath(col[:bodyEnd], start+rel)
 }
 
 // headingPath returns the ATX headings that enclose byte offset in a
@@ -627,7 +652,9 @@ func headingPath(text string, offset int) []string {
 		for len(stack) > 0 && stack[len(stack)-1].level >= level {
 			stack = stack[:len(stack)-1]
 		}
-		stack = append(stack, heading{level, title})
+		if title != "" { // an empty heading closes the deeper ones but names nothing
+			stack = append(stack, heading{level, title})
+		}
 	}
 	if len(stack) == 0 {
 		return nil

@@ -99,6 +99,8 @@ A type stores its entities as `md` (the default: YAML frontmatter + prose body),
 | `khub schema base` | `--format` | the effective base block every type inherits — embedded in the binary since the layer split, so no workspace file carries it (view) |
 | `khub schema snapshot` | `--format` | record the current resolved schema at `.khub/schema.applied.yaml` as the baseline `schema diff` compares against, replacing any earlier one. The file is tracked in git and records the resolved form, not the layer files: per type its storage, id scheme, `required`/`orphan`, template, and every attribute and relation with its facets. Derived inverses, provenance and `when` are left out, since none of them decides validity. `init` and `upgrade` never write it, so a preset upgrade shows up as pending. Returns `{path, types}` |
 | `khub schema diff` | `--format` | the schema changes since the snapshot: `{pending, changes: [{op, path, from, to}]}`, `op` one of `added`/`removed`/`changed`, `path` dotted (`types.component.attributes.lifecycle.enum`). Key order is not a change. Exits 0 whether or not changes are pending; `pending` says which. With no snapshot it refuses (`no_schema_snapshot`, exit 2) and names `khub schema snapshot`; an unreadable one refuses with `invalid_snapshot` |
+| `khub schema scaffold` | `--type <t>` (repeatable), `--format <text\|json>` | the resolved schema as the extraction contract an extractor outside khub fills in: `{provenance, envelope: {shape, supplied, rules}, types: [{name, when, id_shape, fields: [{name, kind, required, enum, pattern, default}], relations: [{name, to, many, required}], body}]}` — stored relations only (no derived inverse), the base fields `add` writes itself (`type`, `created`, `updated`, `draft`) listed as `supplied` rather than asked for, and `body` `{template, sections: [{heading, optional, hint}]}` for a templated md type (`sections: null` when the template does not parse; `null` when the type reads none). Text is the same contract as a Markdown prompt. `--type` narrows it; a name the schema does not declare refuses (`unknown_type`). See [Ingestion](ingestion.md) |
+| `khub schema conform <file\|->` | `--format` | score an extractor's envelope (`-` reads stdin) against the schema and the live workspace, writing nothing: per entity the same field verdicts `validate` gives the file `add` would write, relation targets resolved the way every write resolves them (slug, then alias) with the unresolved ones reported rather than guessed, the body against the type's template, and the required fields the record would leave empty as `gaps`. Exit 0 when every entity conforms, 1 otherwise (`errors` or `unresolved` on any entity; a gap never fails it — capture is never blocked); an unreadable envelope (`invalid_envelope`) or an entity naming an undeclared type (`unknown_type`, listing the declared ones) refuses with exit 2. Payload below |
 | `khub status` | `--format` | counts per type, draft vs active, orphan and stale counts, OKF-conformance flag (projectable-to-OKF) |
 
 ## Author
@@ -246,6 +248,25 @@ Every finding carries a stable location — the `field` on a `validate` row, the
       "reason": "'## Decision' 4 words of prose, at least 15 asked for"
     }
   ]
+}
+```
+
+**`khub schema conform --format json`** — the envelope it reads is `{"entities": [{type, fields, relations, body, source, confidence}]}`: `type` a declared type; `fields` an object of attribute values as JSON scalars or lists (a declared predicate among them is read as a relation, the statement `--<predicate>` makes on `add`); `relations` an object of predicate to a target or a list of targets, each a slug, a qualified `type/slug` or an alias; `body` the Markdown prose; `source` the passage the record came from; `confidence` a number. `body`, `source` and `confidence` are optional and may be `null`; any other key, a non-object entity or a non-JSON document is `invalid_envelope`. The report has one record per entity, in envelope order: `ok` is false when `errors` or `unresolved` is non-empty; `gaps` names the required attributes and relations the written record would leave empty (an unresolved target counts as empty, so a required one lands in both); `score` is `conformant / entities` to three decimals, `1.0` for an empty envelope. Text prints `#<index> <type>: <field>: <reason>` per error, `#<index> <type>: <predicate> -> '<value>' unresolved: <reason>` per unresolved target, `#<index> <type>: - missing <a>, <b>` per entity with gaps, then `Conformed N entities; C conformant, score S`.
+
+```json
+{
+  "entities": [
+    {"index": 0, "type": "project", "ok": true, "errors": [], "gaps": [], "unresolved": []},
+    {
+      "index": 1,
+      "type": "project",
+      "ok": false,
+      "errors": [{"field": "source", "reason": "'carrier-pigeon' is not a valid source (referral, outbound, inbound, partner, event, existing-client)"}],
+      "gaps": ["owner"],
+      "unresolved": [{"predicate": "client", "value": "nowhere", "reason": "No client 'nowhere' to satisfy relation 'client'"}]
+    }
+  ],
+  "summary": {"entities": 2, "conformant": 1, "score": 0.5}
 }
 ```
 

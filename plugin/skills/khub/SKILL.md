@@ -60,6 +60,15 @@ hand-edit is how a workspace acquires a field no default gate will report.
 - `khub link <id> <predicate> <target>` / `khub unlink <id> <predicate> <target> --format json` — relations, idempotent. Read `changed` to tell a write from a no-op; both exit 0.
 - `khub remove <id> --format json` — delete; refuses while an inbound edge resolves to it unless `--force`.
 
+## Ingest a document
+
+When asked to turn a document, a transcript or a page into entities, you are the extractor.
+`khub schema scaffold --format json` (or `--type <t>`) is the contract: fill its envelope from
+the source only, never inventing a value or an id, quoting the passage in `source`. Then
+`khub schema conform <file> --format json` before any write: fix every `errors` row and every
+`unresolved` target (search for the entity it names, or add it first), and `khub add` each
+conformant entry — `--draft` when its `gaps` are non-empty or its confidence is low.
+
 ## The loop
 
 1. `khub add <type> --title "..." …` — it mints the id (`khub schema show <type>` names the

@@ -56,8 +56,10 @@ func assertRoundTrip(t *testing.T, label, v string) {
 }
 
 func TestIssue80ValuesRoundTrip(t *testing.T) {
-	for label, v := range map[string]string{"double": issue80Double, "plain": issue80Plain, "spaces": issue80Spaces} {
-		assertRoundTrip(t, label, v)
+	for _, c := range []struct{ label, value string }{
+		{"double", issue80Double}, {"plain", issue80Plain}, {"spaces", issue80Spaces},
+	} {
+		assertRoundTrip(t, c.label, c.value)
 	}
 }
 
@@ -160,20 +162,20 @@ func TestFoldPlainLegacyBytes(t *testing.T) {
 }
 
 func TestFoldPlain(t *testing.T) {
-	cases := map[string]string{
-		" a b \n  c":            "a b c",
-		"\n  a\n  b":            "a b",
-		" a\n\n  b":             "a\nb",
-		" a  \n\n\n  b\n":       "a\n\nb",
-		" a\t\n  \tb":           "a b",
-		" one\n":                "one",
-		" a \r\n  b\r\n":        "a b",
-		" a\n   deeper\n  back": "a deeper back",
-		" a\n  b\n\n":           "a b",
+	cases := []struct{ in, want string }{
+		{" a b \n  c", "a b c"},
+		{"\n  a\n  b", "a b"},
+		{" a\n\n  b", "a\nb"},
+		{" a  \n\n\n  b\n", "a\n\nb"},
+		{" a\t\n  \tb", "a b"},
+		{" one\n", "one"},
+		{" a \r\n  b\r\n", "a b"},
+		{" a\n   deeper\n  back", "a deeper back"},
+		{" a\n  b\n\n", "a b"},
 	}
-	for in, want := range cases {
-		if got := foldPlain(in); got != want {
-			t.Errorf("foldPlain(%q) = %q, want %q", in, got, want)
+	for _, c := range cases {
+		if got := foldPlain(c.in); got != c.want {
+			t.Errorf("foldPlain(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }

@@ -2,6 +2,16 @@
 
 Notable changes to khub. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); khub is pre-release.
 
+## [Unreleased]
+
+### Added
+
+- **`khub completion <bash|zsh|fish|powershell>`.** Prints a shell completion
+  script. At TAB time the script asks the binary itself (`khub __complete`), so
+  it completes the commands, subcommands and options the installed khub has,
+  plus a directory after `-C`. `completion` was a usage error until now;
+  `--install-completion` still is.
+
 ## [0.30.0] — 2026-10-28
 
 Storage can now follow a hub's existing nesting, relations can point to files

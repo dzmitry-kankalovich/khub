@@ -9,7 +9,7 @@ The CLI is a thin, schema-introspecting adapter over the core library's verbs (c
 | Option | Meaning |
 |---|---|
 | `-C, --workspace <path>` | Operate on this workspace instead of the working directory. Default: the nearest `.khub/` above the working directory. Given a path, khub resolves the nearest `.khub/` at or above it. |
-| `--format <json\|table>` | Output shape. Default: table on a TTY, json otherwise — for **reads and writes alike**. Some commands add `ids`, `raw`, or `tree`. The operator commands (`reindex`, `viz`, `serve`, `backfill`, `wire`) print prose and take no `--format`. |
+| `--format <json\|table>` | Output shape. Default: table on a TTY, json otherwise — for **reads and writes alike**. Some commands add `ids`, `raw`, or `tree`. The operator commands (`reindex`, `viz`, `serve`, `backfill`, `wire`, `completion`) print prose or a script and take no `--format`. |
 | `--version` | Print the khub version and exit. |
 | `--help` | Show help. |
 
@@ -260,5 +260,18 @@ Every finding carries a stable location — the `field` on a `validate` row, the
 | `khub wire` | `--target <claude\|agents\|both>`, `--dry-run` | inject a managed khub block into the workspace's agent files. Bare `wire` writes both `CLAUDE.md` and `AGENTS.md`, creating either that is missing; `--target` creates a specific file. `CLAUDE.md` gets `@.khub/{ontology,policy,storage}.yaml` imports; `AGENTS.md` (no import directive) gets schema pointers. Both carry the command surface, so an agent reasons in the workspace ontology even without running khub. Both end with an install hint: the khub plugin for Claude Code in `CLAUDE.md`, and `npx skills add endgame-build/khub` in `AGENTS.md`. Idempotent, minimal-diff |
 
 `khub init` and `khub upgrade` both run `wire` and the index write as tails. khub installs no skills. They ship in the Claude Code plugin and through `npx skills add endgame-build/khub` (see [Agent skills](../README.md#agent-skills)). khub also leaves alone the skill copies that khub 0.27.0 and earlier wrote under `.claude/skills/`, `.agents/skills/` and `.opencode/skills/`; delete those folders and their `.gitignore` lines by hand.
+
+## Shell completion
+
+`khub completion <bash|zsh|fish|powershell>` prints a completion script for that shell on stdout. It reads no workspace.
+
+```bash
+source <(khub completion bash)                          # this session
+khub completion zsh > "${fpath[1]}/_khub"               # every new zsh
+khub completion fish > ~/.config/fish/completions/khub.fish
+khub completion powershell | Out-String | Invoke-Expression
+```
+
+The bash script needs the `bash-completion` package. The script holds no list of commands: at TAB time it runs `khub __complete <words…>`, so what it offers is always what the installed binary accepts. It completes command and subcommand names, each command's options, the shell argument of `completion`, and a directory after `-C`. It does not complete type names, ids or option values yet. Candidates carry each command's one-line help; set `KHUB_COMPLETION_DESCRIPTIONS=false` to drop them. `__complete` is hidden plumbing for the scripts, not a command to call. `--install-completion`, which Typer apps carry, stays a usage error.
 
 *Planned verbs (not yet shipped): `path`, `build`, `export --okf`, `diff-preset`, `rename`. See the repo for status.*

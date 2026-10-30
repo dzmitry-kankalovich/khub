@@ -78,6 +78,9 @@ hand-edit is how a workspace acquires a field no default gate will report.
 5. `khub check`. **Errors** mean the workspace is broken — fix them before you finish.
    **Gaps** (`incomplete`, orphans, `thin`) mean legal but unfinished; fix the ones your
    change caused.
+   `khub check --mentions --format json` also lists, under `mentions`, entities a body names
+   with no edge behind them. Prose is not a relation: `link` the ones the text really
+   relates to, using one of the row's `predicates`, and leave the rest.
 6. `khub reindex` if you added, removed or re-linked anything. `index.md` is generated, and
    a stale one sends the next reader to a file that moved.
 
